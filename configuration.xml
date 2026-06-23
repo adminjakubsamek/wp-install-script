@@ -1,0 +1,24 @@
+<Configuration ID="vsenory-m365-business">
+
+  <!-- Microsoft 365 Apps for business, 64-bit, Current Channel -->
+  <Add OfficeClientEdition="64" Channel="Current">
+    <Product ID="O365BusinessRetail">
+      <!-- Jazyk podle jazyka Windows; pokud nedostupny, fallback na cestinu -->
+      <Language ID="MatchOS" />
+      <Language ID="cs-cz" Fallback="True" />
+    </Product>
+  </Add>
+
+  <!-- Bez automaticke aktivace: licenci aktivuje uzivatel prihlasenim pod svym uctem -->
+  <Property Name="AUTOACTIVATE" Value="0" />
+  <Property Name="SharedComputerLicensing" Value="0" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+
+  <!-- Office si necha zapnute automaticke aktualizace -->
+  <Updates Enabled="TRUE" />
+
+  <!-- Ticha instalace + odstraneni pripadneho stareho MSI Office -->
+  <Display Level="None" AcceptEULA="TRUE" />
+  <RemoveMSI />
+
+</Configuration>

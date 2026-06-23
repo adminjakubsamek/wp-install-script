@@ -232,10 +232,16 @@ if ($InstallPrinter) {
         Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
         Get-RepoFile -Path 'tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$work\tisk-recepce.ps1"
-        Get-RepoFile -Path 'SetACL.exe' -OutFile "$work\SetACL.exe"
-        & "$work\SetACL.exe" -on "TOSHIBA-recepce" -ot prn -actn ace -ace "n:Everyone;p:man_docs" -ace "n:Everyone;p:print"
-        Write-Host "    [i] Tiskarna TOSHIBA-recepce nainstalovana." -ForegroundColor DarkGray
-        $ok += 'TOSHIBA-recepce'
+        # overit, ze tiskarna opravdu vznikla, az pak nastavit prava a hlasit OK
+        if (Get-Printer -Name 'TOSHIBA-recepce' -ErrorAction SilentlyContinue) {
+            Get-RepoFile -Path 'SetACL.exe' -OutFile "$work\SetACL.exe"
+            & "$work\SetACL.exe" -on "TOSHIBA-recepce" -ot prn -actn ace -ace "n:Everyone;p:man_docs" -ace "n:Everyone;p:print"
+            Write-Host "    [i] Tiskarna TOSHIBA-recepce nainstalovana." -ForegroundColor DarkGray
+            $ok += 'TOSHIBA-recepce'
+        } else {
+            Write-Warning "    Tiskarna se nevytvorila (ovladac/INF?) - viz vystup tisk-recepce.ps1 vyse."
+            $failed += 'TOSHIBA-recepce (ovladac/INF)'
+        }
     } catch {
         Write-Warning "    Tiskarna preskocena: $($_.Exception.Message)"
         $failed += "Tiskarna ($($_.Exception.Message))"
