@@ -1,4 +1,4 @@
-# wp-install-script — nasazení nových PC (Všenory)
+# WELL PACK - instalační skript pro nové počítače s Windows 11
 
 Veřejné repo, ze kterého `bootstrap.ps1` tahá tweaky, konfigurace a ikony.
 Instalace programů jde přes **winget** (nejnovější verze přímo od výrobců).
