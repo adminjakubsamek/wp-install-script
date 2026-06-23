@@ -21,6 +21,8 @@ $Restart     = $true                  # na konci restartovat
 $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
 $LogDir      = 'C:\ProgramData\wp-install'   # kam se uklada log
 $InstallPrinter = $true               # tiskarna TOSHIBA-recepce se instaluje vzdy ($false = preskocit)
+$RenameToSerial = $true               # prejmenovat pocitac dle serioveho cisla (projevi se po restartu)
+$NamePrefix     = ''                  # volitelna predpona nazvu (napr. 'WP-'); prazdne = jen serial
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +61,29 @@ catch { $tag = (Get-Culture).Name }
 $lang = ($tag.Split('-')[0]).ToLower()
 if ($lang -notin @('cs','en','de')) { $lang = 'cs' }        # fallback = cestina
 Write-Host "[*] Jazyk Windows: $tag -> '$lang'" -ForegroundColor Cyan
+
+# --- 3b) Prejmenovani pocitace dle serioveho cisla (BIOS) ---
+if ($RenameToSerial) {
+    try {
+        $serial = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
+        if ($serial) { $serial = $serial.Trim() }
+        $bad   = @('to be filled by o.e.m.','default string','system serial number','none','o.e.m.','0','na','')
+        $clean = if ($serial) { ($serial -replace '[^A-Za-z0-9-]','') } else { '' }
+        if ((-not $clean) -or ($serial.ToLower() -in $bad)) {
+            Write-Warning "[!] Seriove cislo nepouzitelne ('$serial') - nazev pocitace nechavam."
+        } else {
+            $newName = ($NamePrefix + $clean)
+            if ($newName.Length -gt 15) { $newName = $newName.Substring(0,15) }   # NetBIOS limit 15 znaku
+            $newName = $newName.TrimEnd('-')
+            if ($newName -and ($newName -ne $env:COMPUTERNAME)) {
+                Write-Host "[*] Prejmenovani pocitace: $env:COMPUTERNAME -> $newName (projevi se po restartu)" -ForegroundColor Cyan
+                if (-not $PreviewOnly) { Rename-Computer -NewName $newName -Force -ErrorAction Stop }
+            } else {
+                Write-Host "[*] Nazev pocitace '$env:COMPUTERNAME' - beze zmeny." -ForegroundColor DarkGray
+            }
+        }
+    } catch { Write-Warning "[!] Prejmenovani pocitace: $($_.Exception.Message)" }
+}
 
 # --- 4) Overeni / naprava wingetu ---
 function Resolve-Winget {
@@ -104,7 +129,8 @@ if ($PreviewOnly) {
     Write-Host "`nTweaky: tweaks/win10.ps1 + win10.psm1 + install.preset"
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
-    Write-Host "Vlastni prikazy: BitLocker off (C: + BDESVC), RDP UDP off + dialog off, NCD auto-tiskarny off"
+    Write-Host "Prejmenovat dle serioveho cisla: $RenameToSerial (predpona '$NamePrefix')"
+    Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix (DiagTrack/telemetrie)"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
     try { Stop-Transcript | Out-Null } catch {}
@@ -306,6 +332,24 @@ try {
     Set-ItemProperty -Path $ncd -Name 'AutoSetup' -Value 0 -Type DWord
     Write-Host "    [i] Automaticke pridavani sitovych tiskaren vypnuto." -ForegroundColor DarkGray
 } catch { Write-Warning "    NcdAutoSetup: $($_.Exception.Message)" }
+
+# Odblokovat Windows feature updates (novy build):
+# preset pres DisableTelemetry zastavi a zakaze sluzbu DiagTrack -> Windows pak nema
+# data z "Compatibility Appraiseru" a novy build nenabidne. Tady surgicky vratime
+# minimum nutne pro updaty (telemetrie = Required, DiagTrack on, appraiser spusten).
+try {
+    foreach ($k in 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection',
+                   'HKLM:\SOFTWARE\Microsoft\Windows\DataCollection') {
+        if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+        Set-ItemProperty -Path $k -Name 'AllowTelemetry' -Value 1 -Type DWord   # 1 = Required
+    }
+    Set-Service  -Name 'DiagTrack' -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service -Name 'DiagTrack' -ErrorAction SilentlyContinue
+    $apprTask = '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser'
+    Enable-ScheduledTask -TaskName $apprTask -ErrorAction SilentlyContinue | Out-Null
+    Start-ScheduledTask  -TaskName $apprTask -ErrorAction SilentlyContinue
+    Write-Host "    [i] Feature updates odblokovany (telemetrie=Required, DiagTrack on, appraiser)." -ForegroundColor DarkGray
+} catch { Write-Warning "    Feature-update fix: $($_.Exception.Message)" }
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan

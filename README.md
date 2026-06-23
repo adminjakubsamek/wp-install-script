@@ -18,19 +18,23 @@ Na konci se PC restartuje za 30 s (zrušíš `shutdown /a`).
 
 1. **Ověří práva správce** a začne psát log do `C:\ProgramData\wp-install\`.
 2. **Zjistí jazyk Windows** (cs/en/de, fallback cs) — podle něj se řídí jazyk aplikací.
-3. **Nainstaluje aplikace přes winget** (vždy nejnovější verze) — viz seznam níže;
+3. **Pojmenuje počítač podle sériového čísla** (z BIOSu; projeví se po restartu). Lze vypnout a doplnit předponu (viz nastavení nahoře ve skriptu).
+4. **Nainstaluje aplikace přes winget** (vždy nejnovější verze) — viz seznam níže;
    mimo jiné ověří/doinstaluje **Microsoft Teams** (nový klient).
-4. **Vynutí aktualizaci aplikací z Microsoft Store** (na pozadí, pokud je třeba).
-5. **Firefox** stáhne rovnou v lokalizované verzi přímo od Mozilly (dle jazyka Windows).
-6. **Microsoft 365 Apps for business** — stáhne ODT přes winget, nainstaluje Office
+5. **Vynutí aktualizaci aplikací z Microsoft Store** (na pozadí, pokud je třeba).
+6. **Firefox** stáhne rovnou v lokalizované verzi přímo od Mozilly (dle jazyka Windows).
+7. **Microsoft 365 Apps for business** — stáhne ODT přes winget, nainstaluje Office
    v **jednom jazyce** dle Windows, **bez aktivace** (aktivuje uživatel přihlášením).
-7. **Aplikuje Win11 tweaky** (vyčištěný preset Disassembler0 z `tweaks/`).
-8. **Aplikuje konfigurace** z `config/` (pdfsam, vlc) a vypne u Adobe Readeru
+8. **Aplikuje Win11 tweaky** (vyčištěný preset Disassembler0 z `tweaks/`).
+9. **Aplikuje konfigurace** z `config/` (pdfsam, vlc) a vypne u Adobe Readeru
    nabízení placeného Acrobatu.
-9. **Nainstaluje tiskárnu TOSHIBA-recepce** (ovladač z GitHub Release; lze vypnout).
-10. **Vlastní příkazy**: vypne BitLocker na C: + službu BDESVC, vypne UDP pro RDP,
-   potlačí varovný dialog přesměrování a vypne automatické přidávání síťových tiskáren.
-11. **Uklidí** dočasné soubory, vypíše shrnutí (OK / neúspěšné) a restartuje.
+10. **Nainstaluje tiskárnu TOSHIBA-recepce** (ovladač z GitHub Release; lze vypnout).
+11. **Vlastní příkazy**: vypne BitLocker na C: + službu BDESVC, vypne UDP pro RDP,
+   potlačí varovný dialog přesměrování, vypne automatické přidávání síťových tiskáren
+   a **odblokuje Windows feature updates** (preset vypíná DiagTrack/telemetrii, kvůli
+   čemuž Windows nenabídne nový build — vrací se minimum: telemetrie = Required,
+   DiagTrack zapnut, spuštěn Compatibility Appraiser).
+12. **Uklidí** dočasné soubory, vypíše shrnutí (OK / neúspěšné) a restartuje.
 
 ## Instalované aplikace
 
@@ -86,4 +90,10 @@ nechceš, přepni na `$false`. ZIP musí mít v kořeni cestu `Driver\64bit\eSf6
 - **Aktivace Office** a **VPN profily** se řeší ručně (skript instaluje jen programy).
 - **Oracle Java** — pro úřední/komerční použití formálně vyžaduje licenci od Oracle.
 - **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
+- **Název počítače** — `$RenameToSerial` nahoře ve skriptu (default zapnuto); `$NamePrefix`
+  přidá předponu (např. `WP-`). Nepoužitelná sériová čísla (prázdné, „Default string"…) se
+  přeskočí. Limit názvu je 15 znaků (delší se ořízne).
 - **BitLocker** — vypnutí je záměrné (interní výjimka); ostatní se řeší jinde.
+- **Feature updates** — aby stroje dostávaly nové buildy Win11, skript po presetu
+  vrací telemetrii na *Required* a zapíná službu DiagTrack. Pokud chceš telemetrii
+  úplně vypnutou, tuhle část v sekci „Vlastní příkazy" odstraň a nové buildy řeš ručně.
