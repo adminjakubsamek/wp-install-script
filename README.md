@@ -1,4 +1,8 @@
-# WELL PACK - instalační skript pro nové počítače s Windows 11
+# wp-install-script — nasazení nových PC (Všenory)
+
+Veřejné repo, ze kterého `bootstrap.ps1` tahá tweaky, konfigurace a ikony.
+Instalace programů jde přes **winget** (nejnovější verze přímo od výrobců).
+Žádná závislost na NASce ani na jednotce Q:.
 
 ## Struktura repa
 
@@ -14,8 +18,7 @@ wp-install-script/
 │  ├─ pdfsam.l4j.ini        # volitelné
 │  ├─ vlc.reg               # volitelné
 │  └─ office/
-│     ├─ configuration.xml  # ODT: M365 Apps for business, jazyk=MatchOS
-│     └─ setup.exe          # ODT (volitelné – fallback; jinak si ho stáhne winget)
+│     └─ configuration.xml  # ODT: M365 Apps for business, jazyk=MatchOS
 └─ desktop/                  # volitelné ikony na plochu
    ├─ PlochaAll/
    └─ PlochaUser/
@@ -64,8 +67,9 @@ Total Commander se **neinstaluje**.
 Instaluje se přes Office Deployment Tool (ODT) podle `config/office/configuration.xml`:
 produkt **for business**, jazyk **`MatchOS`** (dle Windows, fallback en-us), tichá
 instalace, **bez aktivace** – licenci aktivuje uživatel přihlášením pod svým účtem.
-ODT `setup.exe` si skript stáhne přes winget (nejnovější); jako fallback může ležet
-v `config/office/setup.exe`.
+ODT `setup.exe` si skript stáhne **sám přes winget** (nejnovější verze), rozbalí do
+`%ProgramFiles%\OfficeDeploymentTool`, použije a po instalaci složku smaže. Do repa
+stačí jen `config/office/configuration.xml`.
 
 ## 3) Jazyk programů (dle jazyka Windows)
 
@@ -84,9 +88,6 @@ Skript přečte display language Windows (cs/en/de, fallback en) a podle toho:
   manifestu); když spadne, zkusit znovu později nebo přímý download z teamviewer.com.
   Pozn.: komerční/úřední použití TeamVieweru vyžaduje licenci. Host varianta =
   `TeamViewer.TeamViewer.Host` (bezobslužný přístup).
-- **Microsoft 365** — na prvním stroji ověřit, že ODT `setup.exe` se přes winget najde
-  (hledá se v `C:\Program Files\WinGet\Packages\...OfficeDeploymentTool`). Když ne,
-  nahraj jednorázově `config/office/setup.exe` (viz níže) — skript ho použije jako fallback.
 - **doPDF** — ověřit, že winget předá `-install_language` instalátoru (jinak dořešit přes
   přímý download MSI/EXE).
 - **Adobe Reader** — ověřit, že winget balíček je MUI a chytne jazyk OS.
@@ -118,16 +119,6 @@ Soubory:
 > Pozn.: ovladač je jeden vícejazyčný balík (TOSHIBA e-STUDIO Universal Printer Driver 2),
 > jazyk dialogů se řídí jazykem Windows. Automatický download z webu Toshiby nejde –
 > stránka blokuje roboty a má víc verzí; proto pevná verze v Release.
-
-## Office Deployment Tool – fallback setup.exe (volitelné)
-
-Pokud by `setup.exe` nešel získat přes winget, přidej ho jednorázově do repa:
-
-1. Stáhni ODT z Microsoftu (Download Center, ID 49117) – soubor `officedeploymenttool_*.exe`.
-2. Spusť ho a rozbal (nebo `officedeploymenttool_*.exe /quiet /extract:C:\ODT`).
-3. Z rozbalené složky vezmi `setup.exe` a nahraj ho do `config/office/setup.exe`.
-
-`configuration.xml` je už v repu, ten se needituje.
 
 ## Bezpečnost
 

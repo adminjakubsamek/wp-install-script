@@ -144,34 +144,35 @@ try {
     $failed += "Firefox ($($_.Exception.Message))"
 }
 
-# --- 6) Microsoft 365 Apps for business (ODT, jazyk = MatchOS, aktivace rucne) ---
+# --- 6) Microsoft 365 Apps for business (ODT z webu pres winget, jazyk = MatchOS) ---
+$odtDir = Join-Path $env:ProgramFiles 'OfficeDeploymentTool'
 try {
     Write-Host "[*] Microsoft 365 Apps for business (ODT)..." -ForegroundColor Cyan
     Get-RepoFile -Path 'config/office/configuration.xml' -OutFile "$work\office.xml"
 
-    # ODT setup.exe: nejdriv winget (nejnovejsi), jinak fallback na config/office/setup.exe v repu
-    $setup = $null
+    # winget stahne nejnovejsi ODT a rozbali setup.exe do %ProgramFiles%\OfficeDeploymentTool
     & $winget install --id Microsoft.OfficeDeploymentTool -e --silent `
-        --accept-package-agreements --accept-source-agreements --scope machine 2>$null
-    $pkgDir = Join-Path $env:ProgramFiles 'WinGet\Packages'
-    if (Test-Path $pkgDir) {
-        $setup = Get-ChildItem $pkgDir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
-                 Where-Object { $_.FullName -match 'OfficeDeploymentTool' } |
+        --accept-package-agreements --accept-source-agreements 2>$null
+    $setup = Join-Path $odtDir 'setup.exe'
+    if (-not (Test-Path $setup)) {
+        $setup = Get-ChildItem $env:ProgramFiles -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DirectoryName -match 'OfficeDeploymentTool' } |
                  Select-Object -First 1 -ExpandProperty FullName
     }
-    if (-not $setup) {
-        try { Get-RepoFile -Path 'config/office/setup.exe' -OutFile "$work\odt-setup.exe"; $setup = "$work\odt-setup.exe" } catch {}
-    }
-    if ($setup) {
+    if ($setup -and (Test-Path $setup)) {
         Write-Host "    ODT: $setup" -ForegroundColor DarkGray
         Start-Process -FilePath $setup -ArgumentList "/configure `"$work\office.xml`"" -Wait -NoNewWindow
         Write-Host "    [i] M365 Apps nainstalovany. Aktivace = rucne pri prihlaseni uzivatele." -ForegroundColor DarkGray
         $ok += 'Microsoft365Apps'
     } else {
-        Write-Warning "    ODT setup.exe nenalezen (winget ani config/office/setup.exe) - M365 preskoceno."
-        $failed += 'Microsoft365Apps (ODT setup.exe nenalezen)'
+        Write-Warning "    ODT setup.exe nenalezen - M365 preskoceno."
+        $failed += 'Microsoft365Apps (ODT nenalezen)'
     }
 } catch { Write-Warning "    M365 Apps: $($_.Exception.Message)"; $failed += 'Microsoft365Apps' }
+finally {
+    # uklid ODT (stejne jako ostatni docasne instalacky)
+    if (Test-Path $odtDir) { Remove-Item $odtDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
 
 # --- 7) Stazeni a aplikace tweaku (Disassembler0 - vycisteny preset) ---
 Write-Host "[*] Stahuji a aplikuji Win11 tweaky..." -ForegroundColor Cyan
