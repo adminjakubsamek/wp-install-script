@@ -1,6 +1,8 @@
+## WELL PACK automatický instalační skript pro Windows 11
+
 ## Spuštění
 
-Na čistém Win11 po prvním spuštění → **PowerShell jako správce** → vlož:
+Na čistém Windows 11 po prvním spuštění → **PowerShell jako správce** → vlož:
 
 ```powershell
 irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
@@ -28,7 +30,6 @@ Na konci se PC restartuje za 30 s (zrušíš `shutdown /a`).
 
 Chrome, Firefox, 7-Zip, VLC, Adobe Reader, PDFsam, doPDF, **Oracle Java 8 (JRE)**,
 OpenVPN Community, TeamViewer, **Microsoft 365 Apps for business**.
-Total Commander se **neinstaluje**.
 
 ## Jazyk aplikací (dle jazyka Windows)
 
@@ -72,10 +73,3 @@ nechceš, přepni na `$false`. ZIP musí mít v kořeni cestu `Driver\64bit\eSf6
 
 - Log každého běhu: `C:\ProgramData\wp-install\install_<datum>_<čas>.log`.
 - Náhled bez instalace: nahoře `$PreviewOnly = $true` → jen vypíše plán a skončí.
-
-## Poznámky
-
-- **Aktivace Office** a **VPN profily** se řeší ručně (skript instaluje jen programy).
-- **Oracle Java** — pro úřední/komerční použití formálně vyžaduje licenci od Oracle.
-- **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
-- **BitLocker** — vypnutí je záměrné (interní výjimka); ostatní se řeší jinde.
