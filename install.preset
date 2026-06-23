@@ -1,0 +1,103 @@
+##########
+# Win 10 / Server 2016 / Server 2019 Initial Setup Script - Default preset (Upraveno)
+# Author: Disassembler <disassembler@dasm.cz>
+# Upraveno: ChatGPT pro aktivní body obnovení a OneDrive
+##########
+
+### Require administrator privileges ###
+RequireAdmin
+
+### Privacy Tweaks ###
+DisableTelemetry
+DisableCortana
+DisableWiFiSense
+DisableAppSuggestions
+DisableActivityHistory
+DisableMapUpdates
+DisableFeedback
+DisableTailoredExperiences
+DisableAdvertisingID
+DisableWebLangList
+DisableErrorReporting
+DisableDiagTrack
+DisableWAPPush
+
+### UWP Privacy Tweaks ###
+# (beze změny)
+
+### Security Tweaks ###
+SetUACLow
+HideAccountProtectionWarn
+EnableF8BootMenu
+SetDEPOptOut
+
+### Network Tweaks ###
+SetCurrentNetworkPrivate
+SetUnknownNetworksPrivate
+DisableIPv6
+DisableRemoteAssistance
+EnableRemoteDesktop
+
+### Service Tweaks ###
+EnableUpdateMSProducts
+DisableUpdateRestart
+DisableMaintenanceWakeUp
+DisableSharedExperiences
+DisableAutoplay
+DisableAutorun
+**EnableRestorePoints**
+DisableDefragmentation
+DisableSuperfetch
+EnableNTFSLongPaths
+
+### UI Tweaks ###
+DisableActionCenter
+DisableLockScreenBlur
+DisableAccessibilityKeys
+ShowTaskManagerDetails
+ShowFileOperationsDetails
+ShowTaskbarSearchIcon
+HideTaskView
+SetTaskbarCombineWhenFull
+HideTaskbarPeopleIcon
+DisableSearchAppInStore
+DisableNewAppPrompt
+HideRecentlyAddedApps
+HideMostUsedApps
+DisableShortcutInName
+SetVisualFXPerformance
+AddENKeyboard
+DisableF1HelpKey
+
+### Explorer UI Tweaks ###
+EnableNavPaneExpand
+DisableSharingWizard
+HideSyncNotifications
+HideRecentShortcuts
+SetExplorerThisPC
+ShowThisPCOnDesktop
+ShowUserFolderOnDesktop
+Hide3DObjectsFromThisPC
+DisableThumbnailCache
+DisableThumbsDBOnNetwork
+
+### Application Tweaks ###
+**EnableOneDrive**
+**InstallOneDrive**
+UninstallMsftBloat
+UninstallThirdPartyBloat
+DisableXboxFeatures
+DisableEdgePreload
+DisableIEFirstRun
+DisableFirstLogonAnimation
+DisableMediaSharing
+SetPhotoViewerAssociation
+AddPhotoViewerOpenWith
+RemoveFaxPrinter
+
+### Server Specific Tweaks ###
+# (beze změny)
+
+### Unpinning ###
+UnpinStartMenuTiles
+UnpinTaskbarIcons
