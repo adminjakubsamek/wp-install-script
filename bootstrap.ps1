@@ -102,6 +102,7 @@ if ($PreviewOnly) {
     Write-Host "`nTweaky: tweaks/win10.ps1 + win10.psm1 + install.preset"
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
+    Write-Host "Vlastni prikazy: BitLocker off (C: + BDESVC), RDP UDP off + dialog off"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
     try { Stop-Transcript | Out-Null } catch {}
@@ -148,7 +149,26 @@ try {
 $odtDir = Join-Path $env:ProgramFiles 'OfficeDeploymentTool'
 try {
     Write-Host "[*] Microsoft 365 Apps for business (ODT)..." -ForegroundColor Cyan
-    Get-RepoFile -Path 'config/office/configuration.xml' -OutFile "$work\office.xml"
+    # configuration.xml se generuje s JEDNIM jazykem dle Windows (MatchOS by nabral vic jazyku)
+    $offLangMap = @{ cs = 'cs-cz'; en = 'en-us'; de = 'de-de' }
+    $offLang = $offLangMap[$lang]
+    $offXml = @"
+<Configuration ID="vsenory-m365-business">
+  <Add OfficeClientEdition="64" Channel="Current">
+    <Product ID="O365BusinessRetail">
+      <Language ID="$offLang" />
+    </Product>
+  </Add>
+  <Property Name="AUTOACTIVATE" Value="0" />
+  <Property Name="SharedComputerLicensing" Value="0" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+  <Updates Enabled="TRUE" />
+  <Display Level="None" AcceptEULA="TRUE" />
+  <RemoveMSI />
+</Configuration>
+"@
+    Set-Content -Path "$work\office.xml" -Value $offXml -Encoding UTF8
+    Write-Host "    [i] Office jazyk: $offLang (jediny)" -ForegroundColor DarkGray
 
     # winget stahne nejnovejsi ODT a rozbali setup.exe do %ProgramFiles%\OfficeDeploymentTool
     & $winget install --id Microsoft.OfficeDeploymentTool -e --silent `
@@ -248,6 +268,26 @@ if ($InstallPrinter) {
         $failed += "Tiskarna ($($_.Exception.Message))"
     }
 }
+
+# --- 8c) Vlastni prikazy (uprav/doplnuj dle potreby) ---
+Write-Host "[*] Vlastni prikazy..." -ForegroundColor Cyan
+
+# BitLocker: vypnout sifrovani C: a sluzbu BDESVC (dle interni vyjimky)
+try {
+    & manage-bde.exe -off C: 2>$null
+    Set-Service -Name 'BDESVC' -StartupType Disabled -ErrorAction SilentlyContinue
+    Stop-Service -Name 'BDESVC' -Force -ErrorAction SilentlyContinue
+    Write-Host "    [i] BitLocker C: vypinan, sluzba BDESVC disabled." -ForegroundColor DarkGray
+} catch { Write-Warning "    BitLocker: $($_.Exception.Message)" }
+
+# RDP: vypnout UDP (zasekavajici se obraz) + potlacit varovny dialog presmerovani
+try {
+    $tsc = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Client'
+    if (-not (Test-Path $tsc)) { New-Item -Path $tsc -Force | Out-Null }
+    Set-ItemProperty -Path $tsc -Name 'fClientDisableUDP'               -Value 1 -Type DWord
+    Set-ItemProperty -Path $tsc -Name 'RedirectionWarningDialogVersion' -Value 1 -Type DWord
+    Write-Host "    [i] RDP: UDP vypnuto, varovny dialog potlacen." -ForegroundColor DarkGray
+} catch { Write-Warning "    RDP tweaky: $($_.Exception.Message)" }
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
