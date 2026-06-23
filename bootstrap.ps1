@@ -20,7 +20,7 @@ $Ref         = 'main'                 # vetev nebo tag
 $Restart     = $true                  # na konci restartovat
 $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
 $LogDir      = 'C:\ProgramData\wp-install'   # kam se uklada log
-$InstallPrinter = $false              # $true = nainstalovat tiskarnu TOSHIBA-recepce (jen na pobocce!)
+$InstallPrinter = $true               # tiskarna TOSHIBA-recepce se instaluje vzdy ($false = preskocit)
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -226,11 +226,13 @@ try {
 if ($InstallPrinter) {
     Write-Host "[*] Instalace tiskarny TOSHIBA-recepce..." -ForegroundColor Cyan
     try {
-        Get-RepoFile -Path 'printer/ToshibaDRV.zip' -OutFile "$work\ToshibaDRV.zip"
+        # ovladac (velky) z GitHub Release assetu (releases/latest), zbytek z korene repa
+        $relUrl = "https://github.com/$Owner/$Repo/releases/latest/download/ToshibaDRV.zip"
+        Invoke-WebRequest -Uri $relUrl -OutFile "$work\ToshibaDRV.zip" -UseBasicParsing
         Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
-        Get-RepoFile -Path 'printer/tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
+        Get-RepoFile -Path 'tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$work\tisk-recepce.ps1"
-        Get-RepoFile -Path 'printer/SetACL.exe' -OutFile "$work\SetACL.exe"
+        Get-RepoFile -Path 'SetACL.exe' -OutFile "$work\SetACL.exe"
         & "$work\SetACL.exe" -on "TOSHIBA-recepce" -ot prn -actn ace -ace "n:Everyone;p:man_docs" -ace "n:Everyone;p:print"
         Write-Host "    [i] Tiskarna TOSHIBA-recepce nainstalovana." -ForegroundColor DarkGray
         $ok += 'TOSHIBA-recepce'

@@ -1,4 +1,4 @@
-# WELL PACK - instalační skript pro nové počítače s Windows 11
+# wp-install-script — nasazení nových PC (Všenory)
 
 Veřejné repo, ze kterého `bootstrap.ps1` tahá tweaky, konfigurace a ikony.
 Instalace programů jde přes **winget** (nejnovější verze přímo od výrobců).
@@ -101,25 +101,27 @@ Skript přečte display language Windows (cs/en/de, fallback en) a podle toho:
 
 ## Tiskárna TOSHIBA-recepce (volitelné, jen na pobočce)
 
-Tiskárna je vázaná na pobočku (IP 192.168.0.240), proto je vypnutá výchozím
-nastavením. Zapneš ji nahoře v `bootstrap.ps1`:
+Tiskárna (IP 192.168.0.240) se instaluje **vždy** (`$InstallPrinter = $true`).
+Když ji na nějakém stroji nechceš, přepni nahoře v `bootstrap.ps1` na:
 
 ```powershell
-$InstallPrinter = $true
+$InstallPrinter = $false
 ```
 
-Do repa přidej složku `printer/`:
+Soubory:
+- **`tisk-recepce.ps1`** a **`SetACL.exe`** → v **kořeni repa** (malé, stahují se přes raw).
+- **`ToshibaDRV.zip`** → ovladač je velký, do stromu repa se nevejde (limit 100 MB).
+  Nahraj ho jako **přílohu GitHub Release** (Releases → *Create a new release* →
+  tag např. `drivers` → *Attach binaries* → vyber `ToshibaDRV.zip` → *Publish release*).
+  Skript ho tahá z `releases/latest/download/ToshibaDRV.zip`, takže vždy z nejnovějšího release.
 
-```
-printer/
-├─ ToshibaDRV.zip      # ovladač – ZIP, jehož KOŘEN obsahuje Driver\64bit\eSf6u.inf
-├─ tisk-recepce.ps1    # přidá ovladač, port 192.168.0.240 a tiskárnu TOSHIBA-recepce
-└─ SetACL.exe          # nastaví práva (Everyone: print + manage docs)
-```
-
-`ToshibaDRV.zip` vyrob tak, že zazipuješ **obsah** své staré složky `ToshibaDRV`
+`ToshibaDRV.zip` vyrob tak, že zazipuješ **obsah** složky `ToshibaDRV`
 (aby po rozbalení do `C:\Program Files\ToshibaDRV` vznikla cesta
 `C:\Program Files\ToshibaDRV\Driver\64bit\eSf6u.inf`).
+
+> Pozn.: ovladač je jeden vícejazyčný balík (TOSHIBA e-STUDIO Universal Printer Driver 2),
+> jazyk dialogů se řídí jazykem Windows. Automatický download z webu Toshiby nejde –
+> stránka blokuje roboty a má víc verzí; proto pevná verze v Release.
 
 ## Office Deployment Tool – fallback setup.exe (volitelné)
 
