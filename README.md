@@ -1,9 +1,3 @@
-# wp-install-script — nasazení nových PC (Všenory)
-
-Veřejné repo s jedním skriptem (`bootstrap.ps1`), který z čistého Windows 11 udělá
-hotový pracovní počítač. Vše se tahá z webu (winget + výrobci + tohle repo), žádná
-závislost na NASce ani na jednotce Q:.
-
 ## Spuštění
 
 Na čistém Win11 po prvním spuštění → **PowerShell jako správce** → vlož:
@@ -40,7 +34,7 @@ Na konci se PC restartuje za 30 s (zrušíš `shutdown /a`).
 
 Chrome, Firefox, 7-Zip, VLC, Adobe Reader, PDFsam, doPDF, **Oracle Java 8 (JRE)**,
 OpenVPN Community, TeamViewer, **Microsoft Teams**, **Microsoft 365 Apps for business**.
-Plus aktualizace aplikací z Microsoft Store. Total Commander se **neinstaluje**.
+Plus aktualizace aplikací z Microsoft Store.
 
 ## Jazyk aplikací (dle jazyka Windows)
 
