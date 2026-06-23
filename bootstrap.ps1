@@ -9,7 +9,7 @@
     Priklad spusteni (jeden radek, elevovany PowerShell):
       irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
 
-    Log z kazdeho behu: C:\ProgramData\wp-install\install_<datum>_<cas>.log
+    Log z kazdeho behu: na plochu admina (install_<datum>_<cas>.log)
     Nahled bez instalace: nahore prepni $PreviewOnly = $true (jen vypise plan a skonci).
 #>
 
@@ -19,10 +19,14 @@ $Repo        = 'wp-install-script'    # nazev repa
 $Ref         = 'main'                 # vetev nebo tag
 $Restart     = $true                  # na konci restartovat
 $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
-$LogDir      = 'C:\ProgramData\wp-install'   # kam se uklada log
+# Log se uklada na plochu admina (viz 0b) - zadny zapis do C:\ProgramData
 $InstallPrinter = $true               # tiskarna TOSHIBA-recepce se instaluje vzdy ($false = preskocit)
 $RenameToSerial = $true               # prejmenovat pocitac dle serioveho cisla (projevi se po restartu)
 $NamePrefix     = ''                  # volitelna predpona nazvu (napr. 'WP-'); prazdne = jen serial
+$RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store OneNote
+$RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
+$UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook.lnk','Word.lnk','Excel.lnk')  # smazatelne kopie na plochu uzivatele
+$ClearPublicDesktop       = $true     # smazat (ne-smazatelne) zastupce z verejne plochy
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -34,9 +38,12 @@ if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Spust tento skript v ELEVOVANEM PowerShellu (Run as administrator)."
 }
 
-# --- 0b) Log (transcript) ---
-if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-$logFile = Join-Path $LogDir ("install_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+# --- 0b) Log (transcript) na plochu admina (ne do C:) ---
+$adminDesktop = [Environment]::GetFolderPath('DesktopDirectory')
+if (-not $adminDesktop) { $adminDesktop = Join-Path $env:USERPROFILE 'Desktop' }
+if (-not (Test-Path $adminDesktop)) { New-Item -ItemType Directory -Path $adminDesktop -Force | Out-Null }
+$script:Issues = @()   # sem se sbira, co se behem skriptu nepovedlo (pro poznamku adminovi)
+$logFile = Join-Path $adminDesktop ("install_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
 try { Start-Transcript -Path $logFile -Append | Out-Null } catch {}
 Write-Host "[*] Log: $logFile" -ForegroundColor Cyan
 
@@ -111,6 +118,7 @@ $apps = @(
     @{ Id = 'OpenVPNTechnologies.OpenVPN' }                    # OpenVPN Community klient (profily rucne)
     @{ Id = 'TeamViewer.TeamViewer' }                          # plny klient; obcas 'hash mismatch' (OVERIT)
     @{ Id = 'Microsoft.Teams'; Scope = 'none' }                # novy Teams (work/school); MSIX -> bez --scope
+    @{ Id = 'Microsoft.AzureVPNClient'; Scope = 'none' }       # Azure VPN Client (Win11+); samostatny winget instalator
 )
 
 # --- 5b) Nahled bez instalace ---
@@ -130,11 +138,85 @@ if ($PreviewOnly) {
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
     Write-Host "Prejmenovat dle serioveho cisla: $RenameToSerial (predpona '$NamePrefix')"
-    Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix (DiagTrack/telemetrie)"
+    Write-Host "Personalizace: Start vlevo, lupa ikona, pripony on, ikony plochy, taskbar pripnuti (FF,Chrome,Pruzkumnik,Outlook,Teams,Vystrizky)"
+    Write-Host "Poznamka na plochu admina: ESET, tiskarny, migrace, Chrome, OneDrive, heslo+sifrovani"
+    Write-Host "Predinstalacni uklid: OEM Office=$RemovePreinstalledOffice, cizi AV=$RemoveThirdPartyAV"
+    Write-Host "Plocha uzivatele (smazatelne): $($UserDesktopShortcuts -join ', '); vycistit verejnou=$ClearPublicDesktop"
+    Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
     try { Stop-Transcript | Out-Null } catch {}
     return
+}
+
+# --- 5a) Predinstalacni uklid: OEM Office balast + cizi antiviry (bezi jako PRVNI) ---
+Write-Host "[*] Predinstalacni uklid (OEM Office / OneNote / cizi AV)..." -ForegroundColor Cyan
+function Get-Prop { param($obj,$name) if ($obj.PSObject.Properties[$name]) { $obj.PSObject.Properties[$name].Value } else { $null } }
+
+# 1) Vsechny preinstalovane Office Click-to-Run produkty + jazykove mutace -> ODT Remove All
+if ($RemovePreinstalledOffice) {
+    try {
+        & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --accept-package-agreements --accept-source-agreements 2>$null
+        $odtSetup = Join-Path $env:ProgramFiles 'OfficeDeploymentTool\setup.exe'
+        if (Test-Path $odtSetup) {
+            $rmXml = @"
+<Configuration>
+  <Remove All="TRUE" />
+  <Display Level="None" AcceptEULA="TRUE" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+</Configuration>
+"@
+            Set-Content -Path "$work\office-remove.xml" -Value $rmXml -Encoding UTF8
+            Write-Host "    [>] Odinstalace vsech Office C2R produktu (ODT Remove All)..." -ForegroundColor DarkGray
+            Start-Process -FilePath $odtSetup -ArgumentList "/configure `"$work\office-remove.xml`"" -Wait -NoNewWindow
+            Write-Host "    [i] OEM Office C2R odebran." -ForegroundColor DarkGray
+        }
+    } catch { $m = "OEM Office: ODT Remove All selhal ($($_.Exception.Message))"; Write-Warning "    $m"; $script:Issues += $m }
+
+    # Store/UWP Office stuby + OneNote (vsem uzivatelum + provisioned, aby se nevracely)
+    foreach ($pat in 'Microsoft.MicrosoftOfficeHub','Microsoft.Office.OneNote','Microsoft.OneNote') {
+        try { Get-AppxPackage -AllUsers -Name $pat -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue } catch {}
+        try {
+            Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -eq $pat } |
+                ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null }
+        } catch {}
+    }
+}
+
+# 2) Cizi antiviry (best-effort; Windows Defender a ESET ZAMERNE nechavame)
+if ($RemoveThirdPartyAV) {
+    try {
+        $avRegex = 'McAfee|Norton|Avast|AVG|Avira|Kaspersky|Bitdefender|Webroot|Malwarebytes|Panda|Sophos|TotalAV'
+        $uninstKeys = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $found = Get-ItemProperty $uninstKeys -ErrorAction SilentlyContinue | Where-Object {
+            $dn = Get-Prop $_ 'DisplayName'; $dn -and ($dn -match $avRegex)
+        }
+        if (-not $found) {
+            Write-Host "    [i] Zadny cizi antivirus nenalezen." -ForegroundColor DarkGray
+        } else {
+            foreach ($p in $found) {
+                $dn = Get-Prop $p 'DisplayName'
+                $q  = Get-Prop $p 'QuietUninstallString'
+                $u  = Get-Prop $p 'UninstallString'
+                Write-Host "    [>] Odinstalace AV: $dn" -ForegroundColor DarkGray
+                try {
+                    if ($q) {
+                        Start-Process cmd.exe -ArgumentList "/c `"$q`"" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                    } elseif ($u -and ($u -match 'msiexec')) {
+                        $code = [regex]::Match($u,'{[0-9A-Fa-f\-]+}').Value
+                        if ($code) { Start-Process msiexec.exe -ArgumentList "/x $code /qn /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue }
+                    } else {
+                        $m = "AV nelze ticho odinstalovat: $dn (nutny vendor nastroj - McAfee MCPR / Norton Remove Tool apod.)"
+                        Write-Warning "      $m"; $script:Issues += $m
+                    }
+                } catch { $m = "AV odinstalace selhala: $dn ($($_.Exception.Message))"; Write-Warning "      $m"; $script:Issues += $m }
+            }
+        }
+    } catch { Write-Warning "    Odebrani AV: $($_.Exception.Message)" }
 }
 
 # --- 5c) Instalace aplikaci ---
@@ -350,6 +432,153 @@ try {
     Start-ScheduledTask  -TaskName $apprTask -ErrorAction SilentlyContinue
     Write-Host "    [i] Feature updates odblokovany (telemetrie=Required, DiagTrack on, appraiser)." -ForegroundColor DarkGray
 } catch { Write-Warning "    Feature-update fix: $($_.Exception.Message)" }
+
+# Casove pasmo dle polohy + vynuceni synchronizace casu.
+# Vsechny stroje jsou v CR -> nastavime rovnou CET (spolehlive) a zaroven zapneme
+# automatiku dle polohy, aby se to samo opravilo, kdyby stroj jel jinam.
+try {
+    Set-TimeZone -Id 'Central European Standard Time' -ErrorAction SilentlyContinue
+    # povolit sluzby polohy (nutne pro "nastavit pasmo automaticky")
+    & reg add "HKLM\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" /v Status /t REG_DWORD /d 1 /f *>$null
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location" /v Value /t REG_SZ /d Allow /f *>$null
+    # "Nastavit casove pasmo automaticky" = sluzba tzautoupdate (Start=3 -> zapnuto)
+    & reg add "HKLM\SYSTEM\CurrentControlSet\Services\tzautoupdate" /v Start /t REG_DWORD /d 3 /f *>$null
+    # vynutit synchronizaci casu
+    Set-Service  -Name w32time -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service -Name w32time -ErrorAction SilentlyContinue
+    & w32tm /config /manualpeerlist:"time.windows.com,0x9" /syncfromflags:manual /update *>$null
+    & w32tm /resync /force *>$null
+    Write-Host "    [i] Casove pasmo (CET + auto dle polohy) a synchronizace casu nastaveny." -ForegroundColor DarkGray
+} catch { $m = "Cas/pasmo: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
+# --- 8d) Personalizace: hlavni panel, Start, plocha (aktualni + novi uzivatele) ---
+# HKCU se tyka jen aktualniho uctu; aby nastaveni dostali i nove zalozeni uzivatele,
+# zapisujeme zaroven do Default hive (C:\Users\Default\NTUSER.DAT).
+Write-Host "[*] Personalizace (taskbar / Start / plocha)..." -ForegroundColor Cyan
+try {
+    $loaded = $false
+    & reg load "HKU\WPDEF" "C:\Users\Default\NTUSER.DAT" *>$null
+    if ($LASTEXITCODE -eq 0) { $loaded = $true }
+
+    $targets = @('HKCU')
+    if ($loaded) { $targets += 'HKU\WPDEF' }
+    foreach ($r in $targets) {
+        $adv = "$r\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+        & reg add $adv /v TaskbarAl          /t REG_DWORD /d 0 /f *>$null   # Start/taskbar zarovnat doleva
+        & reg add $adv /v TaskbarGlomLevel   /t REG_DWORD /d 0 /f *>$null   # vzdy slucovat (vypnout "roztahovani" oken)
+        & reg add $adv /v MMTaskbarGlomLevel /t REG_DWORD /d 0 /f *>$null   # totez na sekundarnich monitorech
+        & reg add $adv /v HideFileExt        /t REG_DWORD /d 0 /f *>$null   # zobrazit pripony souboru
+        & reg add "$r\Software\Microsoft\Windows\CurrentVersion\Search" /v SearchboxTaskbarMode /t REG_DWORD /d 1 /f *>$null  # hledani = jen ikona (lupa)
+        $nsp = "$r\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+        & reg add $nsp /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 0 /f *>$null   # Tento pocitac
+        & reg add $nsp /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 0 /f *>$null   # Slozka uzivatele
+        & reg add $nsp /v "{645FF040-5081-101B-9F08-00AA002F954E}" /t REG_DWORD /d 0 /f *>$null   # Kos
+    }
+    if ($loaded) {
+        [gc]::Collect(); Start-Sleep -Milliseconds 700
+        & reg unload "HKU\WPDEF" *>$null
+        if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 1; & reg unload "HKU\WPDEF" *>$null }
+    }
+    Write-Host "    [i] Start vlevo, lupa jako ikona, pripony viditelne, ikony na plose (Tento PC/Slozka/Kos)." -ForegroundColor DarkGray
+} catch { Write-Warning "    Personalizace registru: $($_.Exception.Message)" }
+
+# Pripnuti na hlavni panel v presnem poradi (Edge pryc) pres LayoutModification.xml.
+# Plati pro NOVE prihlasene uzivatele (zaklada se z Default profilu).
+try {
+    function Find-Lnk { param([string[]]$Names)
+        $root = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
+        foreach ($n in $Names) {
+            $f = Get-ChildItem -Path $root -Recurse -Filter $n -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($f) { return $f.FullName }
+        }
+        return $null
+    }
+    $ff = Find-Lnk @('Firefox.lnk','Mozilla Firefox.lnk')
+    $gc = Find-Lnk @('Google Chrome.lnk','Chrome.lnk')
+    $ol = Find-Lnk @('Outlook.lnk','Outlook (classic).lnk','Microsoft Outlook.lnk')
+
+    $pins = ''
+    if ($ff) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$ff`" />`r`n" }
+    if ($gc) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$gc`" />`r`n" }
+    $pins += "        <taskbar:DesktopApp DesktopApplicationID=`"Microsoft.Windows.Explorer`" />`r`n"
+    if ($ol) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$ol`" />`r`n" }
+    $pins += "        <taskbar:UWA AppUserModelID=`"MSTeams_8wekyb3d8bbwe!MSTeams`" />`r`n"
+    $pins += "        <taskbar:UWA AppUserModelID=`"Microsoft.ScreenSketch_8wekyb3d8bbwe!App`" />`r`n"
+
+    $xml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<LayoutModificationTemplate
+    xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification"
+    xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout"
+    xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout"
+    xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout"
+    Version="1">
+  <CustomTaskbarLayoutCollection PinListPlacement="Replace">
+    <defaultlayout:TaskbarLayout>
+      <taskbar:TaskbarPinList>
+$pins      </taskbar:TaskbarPinList>
+    </defaultlayout:TaskbarLayout>
+  </CustomTaskbarLayoutCollection>
+</LayoutModificationTemplate>
+"@
+    $shellDir = 'C:\Users\Default\AppData\Local\Microsoft\Windows\Shell'
+    if (-not (Test-Path $shellDir)) { New-Item -ItemType Directory -Path $shellDir -Force | Out-Null }
+    Set-Content -Path (Join-Path $shellDir 'LayoutModification.xml') -Value $xml -Encoding UTF8
+    Write-Host "    [i] Taskbar pripnuti (Firefox, Chrome, Pruzkumnik, Outlook, Teams, Vystrizky) pro nove uzivatele." -ForegroundColor DarkGray
+} catch { Write-Warning "    Taskbar pripnuti: $($_.Exception.Message)" }
+
+# --- 8e) Poznamka na plochu admina (co dodelat po instalaci) ---
+try {
+    $todo = @(
+        'ADMIN – dodělat po instalaci'
+        '============================'
+        ''
+        '• ESET – doinstalovat'
+        '• TeamViewer – nastavit statické heslo'
+        '• Tiskárny'
+        '• Migrace dat'
+        '• Google Chrome – záložky a hesla (kontrola)'
+        '• OneDrive – přihlášení'
+        '• Heslo počítače + ESET šifrování'
+    )
+    # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
+    $problems = @()
+    if ($failed)        { $problems += $failed }
+    if ($script:Issues) { $problems += $script:Issues }
+    $todo += ''
+    $todo += 'Co se NEPOVEDLO automaticky (zkontrolovat):'
+    $todo += '-------------------------------------------'
+    if ($problems) { foreach ($x in $problems) { $todo += "• $x" } }
+    else           { $todo += '• (nic – vše proběhlo OK)' }
+    $todo += ''
+    $todo += "Detailní log: $logFile"
+    $noteText = $todo -join "`r`n"
+    $notePath = Join-Path $adminDesktop 'ADMIN - po instalaci.txt'
+    Set-Content -Path $notePath -Value $noteText -Encoding UTF8
+    Write-Host "    [i] Poznamka na plochu: $notePath" -ForegroundColor DarkGray
+} catch { Write-Warning "    Poznamka na plochu: $($_.Exception.Message)" }
+
+# --- 8f) Zastupci na plochu uzivatele (smazatelne) + uklid verejne plochy ---
+# Verejna plocha (C:\Users\Public\Desktop) je pro ne-adminy NESMAZATELNA. Proto davame
+# zastupce do Default\Desktop -> kazdy novy uzivatel dostane VLASTNI kopii, kterou smaze.
+try {
+    $defDesk = 'C:\Users\Default\Desktop'
+    if (-not (Test-Path $defDesk)) { New-Item -ItemType Directory -Path $defDesk -Force | Out-Null }
+    $startRoot = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
+    foreach ($name in $UserDesktopShortcuts) {
+        $lnk = Get-ChildItem -Path $startRoot -Recurse -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($lnk) {
+            Copy-Item $lnk.FullName -Destination $defDesk -Force -ErrorAction SilentlyContinue
+            Write-Host "    [+] plocha uzivatele: $($lnk.Name)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    [-] zastupce nenalezen: $name" -ForegroundColor DarkGray
+        }
+    }
+    if ($ClearPublicDesktop) {
+        Get-ChildItem 'C:\Users\Public\Desktop\*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Write-Host "    [i] Verejna plocha vycistena (nesmazatelni zastupci pryc)." -ForegroundColor DarkGray
+    }
+} catch { Write-Warning "    Zastupci na plochu: $($_.Exception.Message)" }
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
