@@ -28,13 +28,11 @@ DisableWAPPush
 ### Security Tweaks ###
 SetUACLow
 HideAccountProtectionWarn
-EnableF8BootMenu
 SetDEPOptOut
 
 ### Network Tweaks ###
 SetCurrentNetworkPrivate
 SetUnknownNetworksPrivate
-DisableIPv6
 DisableRemoteAssistance
 EnableRemoteDesktop
 
@@ -45,21 +43,15 @@ DisableMaintenanceWakeUp
 DisableSharedExperiences
 DisableAutoplay
 DisableAutorun
-**EnableRestorePoints**
-DisableDefragmentation
-DisableSuperfetch
+EnableRestorePoints
 EnableNTFSLongPaths
 
 ### UI Tweaks ###
-DisableActionCenter
 DisableLockScreenBlur
 DisableAccessibilityKeys
 ShowTaskManagerDetails
 ShowFileOperationsDetails
-ShowTaskbarSearchIcon
 HideTaskView
-SetTaskbarCombineWhenFull
-HideTaskbarPeopleIcon
 DisableSearchAppInStore
 DisableNewAppPrompt
 HideRecentlyAddedApps
@@ -77,18 +69,14 @@ HideRecentShortcuts
 SetExplorerThisPC
 ShowThisPCOnDesktop
 ShowUserFolderOnDesktop
-Hide3DObjectsFromThisPC
-DisableThumbnailCache
 DisableThumbsDBOnNetwork
 
 ### Application Tweaks ###
-**EnableOneDrive**
-**InstallOneDrive**
+EnableOneDrive
+InstallOneDrive
 UninstallMsftBloat
 UninstallThirdPartyBloat
 DisableXboxFeatures
-DisableEdgePreload
-DisableIEFirstRun
 DisableFirstLogonAnimation
 DisableMediaSharing
 SetPhotoViewerAssociation
@@ -99,5 +87,3 @@ RemoveFaxPrinter
 # (beze změny)
 
 ### Unpinning ###
-UnpinStartMenuTiles
-UnpinTaskbarIcons
