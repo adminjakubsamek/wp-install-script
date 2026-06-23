@@ -8,13 +8,18 @@
 
     Priklad spusteni (jeden radek, elevovany PowerShell):
       irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
+
+    Log z kazdeho behu: C:\ProgramData\wp-install\install_<datum>_<cas>.log
+    Nahled bez instalace: nahore prepni $PreviewOnly = $true (jen vypise plan a skonci).
 #>
 
 # ============================ KONFIGURACE ============================
-$Owner = 'adminjakubsamek'   # GitHub ucet
-$Repo  = 'wp-install-script'  # nazev repa
-$Ref   = 'main'              # vetev nebo tag
-$Restart = $true             # na konci restartovat
+$Owner       = 'adminjakubsamek'      # GitHub ucet
+$Repo        = 'wp-install-script'    # nazev repa
+$Ref         = 'main'                 # vetev nebo tag
+$Restart     = $true                  # na konci restartovat
+$PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
+$LogDir      = 'C:\ProgramData\wp-install'   # kam se uklada log
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -25,6 +30,12 @@ $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Spust tento skript v ELEVOVANEM PowerShellu (Run as administrator)."
 }
+
+# --- 0b) Log (transcript) ---
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+$logFile = Join-Path $LogDir ("install_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+try { Start-Transcript -Path $logFile -Append | Out-Null } catch {}
+Write-Host "[*] Log: $logFile" -ForegroundColor Cyan
 
 # --- 1) Pracovni temp slozka (na konci se smaze) ---
 $work = Join-Path $env:TEMP ("provision-" + [guid]::NewGuid().ToString('N').Substring(0,8))
@@ -71,26 +82,47 @@ $apps = @(
     @{ Id = 'Adobe.Acrobat.Reader.64-bit' }                    # MUI dle OS  (OVERIT na 1. stroji)
     @{ Id = 'PDFsam.PDFsam' }                                  # (+ pdfsam.reg, pdfsam.l4j.ini)
     @{ Id = 'Softland.doPDF.11'; Custom = "-install_language=$lang" }   # OVERIT, ze winget arg prijme
-    @{ Id = 'Ghisler.TotalCommander'; Scope = 'user' }         # winget umi jen user-scope (+ wincmd.ini)
     @{ Id = 'EclipseAdoptium.Temurin.21.JRE' }                 # Java 21 LTS runtime
     @{ Id = 'OpenVPNTechnologies.OpenVPN' }                    # OpenVPN Community klient (profily rucne)
+    @{ Id = 'TeamViewer.TeamViewer' }                          # plny klient; obcas 'hash mismatch' (OVERIT)
 )
 
-$failed = @()
+# --- 5b) Nahled bez instalace ---
+if ($PreviewOnly) {
+    Write-Host "`n===== NAHLED (PreviewOnly) - nic se neinstaluje =====" -ForegroundColor Magenta
+    Write-Host "Jazyk: $tag -> '$lang'"
+    Write-Host "`nAplikace (winget):"
+    foreach ($a in $apps) {
+        $sc = if ($a.ContainsKey('Scope')) { $a.Scope } else { 'machine' }
+        $cu = if ($a.ContainsKey('Custom')) { "  custom: $($a.Custom)" } else { '' }
+        Write-Host ("  - {0}  (scope={1}){2}" -f $a.Id, $sc, $cu)
+    }
+    Write-Host "`nTweaky: tweaks/win10.ps1 + win10.psm1 + install.preset"
+    Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Firefox policies.json"
+    Write-Host "Restart na konci: $Restart"
+    Write-Host "=====================================================`n" -ForegroundColor Magenta
+    try { Stop-Transcript | Out-Null } catch {}
+    return
+}
+
+# --- 5c) Instalace aplikaci ---
+$ok = @(); $failed = @()
 foreach ($a in $apps) {
-    $args = @('install','--id', $a.Id, '-e', '--silent',
-              '--accept-package-agreements','--accept-source-agreements',
-              '--disable-interactivity')
+    $wgArgs = @('install','--id', $a.Id, '-e', '--silent',
+                '--accept-package-agreements','--accept-source-agreements',
+                '--disable-interactivity')
     $scope = if ($a.ContainsKey('Scope')) { $a.Scope } else { 'machine' }
-    $args += @('--scope', $scope)
-    if ($a.ContainsKey('Custom')) { $args += @('--custom', $a.Custom) }
+    $wgArgs += @('--scope', $scope)
+    if ($a.ContainsKey('Custom')) { $wgArgs += @('--custom', $a.Custom) }
 
     Write-Host "[>] Instaluji $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
-    & $winget @args
+    & $winget @wgArgs
     # winget: 0 = OK, -1978335189 = uz nainstalovano/no upgrade. Bereme jako OK.
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+    if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189) {
+        $ok += $a.Id
+    } else {
         Write-Warning "    $($a.Id) skoncil s kodem $LASTEXITCODE"
-        $failed += $a.Id
+        $failed += "$($a.Id) (kod $LASTEXITCODE)"
     }
 }
 
@@ -99,7 +131,6 @@ Write-Host "[*] Stahuji a aplikuji Win11 tweaky..." -ForegroundColor Cyan
 Get-RepoFile -Path 'tweaks/win10.ps1'       -OutFile "$work\win10.ps1"
 Get-RepoFile -Path 'tweaks/win10.psm1'      -OutFile "$work\win10.psm1"
 Get-RepoFile -Path 'tweaks/install.preset'  -OutFile "$work\install.preset"
-& $winget *> $null 2>&1   # no-op, jen aby PATH/context byl ohraty
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$work\win10.ps1" `
     -include "$work\win10.psm1" -preset "$work\install.preset"
 
@@ -122,18 +153,7 @@ try {
     else { Write-Warning "    PDFsam adresar nenalezen ($pdfsamDir) - over cestu winget instalace." }
 } catch { Write-Warning "    pdfsam.l4j.ini: $($_.Exception.Message)" }
 
-# 7c) Total Commander - wincmd.ini + jazyk (OVERIT cestu; winget instaluje user-scope!)
-try {
-    Get-RepoFile -Path 'config/wincmd.ini' -OutFile "$work\wincmd.ini"
-    $lngMap  = @{ cs = 'wcmd_cz.lng'; en = 'wcmd_eng.lng'; de = 'wcmd_deu.lng' }
-    $ini = Get-Content "$work\wincmd.ini" -Raw
-    $ini = [regex]::Replace($ini, '(?im)^\s*languageini\s*=.*$', "languageini=$($lngMap[$lang])")
-    Set-Content "$work\wincmd.ini" -Value $ini -Encoding Default
-    # POZN: presnou cilovou cestu wincmd.ini doladime, az uvidime kam winget TC nainstaloval.
-    Write-Host "    [i] wincmd.ini pripraven s jazykem '$lang' - cilova cesta k overeni." -ForegroundColor DarkYellow
-} catch { Write-Warning "    wincmd.ini: $($_.Exception.Message)" }
-
-# 7d) Firefox - jazyk pres policies.json (Firefox si langpack dotahne sam)
+# 7c) Firefox - jazyk pres policies.json (Firefox si langpack dotahne sam)
 try {
     $ffDir = 'C:\Program Files\Mozilla Firefox\distribution'
     if (Test-Path 'C:\Program Files\Mozilla Firefox') {
@@ -144,18 +164,24 @@ try {
     }
 } catch { Write-Warning "    Firefox policies.json: $($_.Exception.Message)" }
 
-# 7e) Ikony na plochu (volitelne - jen pokud v repu existuji)
-foreach ($set in @(@{P='desktop/PlochaAll';  D="$env:PUBLIC\Desktop"},
-                    @{P='desktop/PlochaUser'; D="$env:USERPROFILE\Desktop"})) {
-    # Pozn: pro vice souboru je lepsi v repu drzet ZIP a tady ho rozbalit; tady ponechano jako TODO.
-}
+# 7d) Ikony na plochu (volitelne - jen pokud v repu existuji)
+#     Pozn: pro vice souboru je lepsi v repu drzet ZIP a tady ho rozbalit; ponechano jako TODO.
 
-# --- 8) Uklid temp + restart ---
+# --- 8) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 
-if ($failed.Count) { Write-Warning "Neuspesne balicky: $($failed -join ', ')" }
-Write-Host "[OK] Hotovo." -ForegroundColor Green
+Write-Host "`n===== SHRNUTI =====" -ForegroundColor Green
+Write-Host ("Nainstalovano OK ({0}): {1}" -f $ok.Count, ($ok -join ', '))
+if ($failed.Count) {
+    Write-Host ("Neuspesne ({0}): {1}" -f $failed.Count, ($failed -join ', ')) -ForegroundColor Red
+} else {
+    Write-Host "Neuspesne: zadne" -ForegroundColor Green
+}
+Write-Host "Log: $logFile"
+Write-Host "===================`n" -ForegroundColor Green
+
+try { Stop-Transcript | Out-Null } catch {}
 
 if ($Restart) {
     shutdown.exe /r /t 30 /c "Instalace dokoncena, restartuji za 30 s"
