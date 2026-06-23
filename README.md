@@ -1,130 +1,81 @@
-# wp-install-script — nasazení nových PC (Všenory)
+## Spuštění
 
-Veřejné repo, ze kterého `bootstrap.ps1` tahá tweaky, konfigurace a ikony.
-Instalace programů jde přes **winget** (nejnovější verze přímo od výrobců).
-Žádná závislost na NASce ani na jednotce Q:.
-
-## Struktura repa
-
-```
-wp-install-script/
-├─ bootstrap.ps1              # hlavní skript, spouští IT na čistém Win11
-├─ tweaks/
-│  ├─ win10.ps1              # runner (beze změny)
-│  ├─ win10.psm1             # modul tweaků (beze změny)
-│  └─ install.preset         # vyčištěný preset (z auditu)
-├─ config/
-│  ├─ pdfsam.reg
-│  ├─ pdfsam.l4j.ini        # volitelné
-│  ├─ vlc.reg               # volitelné
-│  └─ office/
-│     └─ configuration.xml  # ODT: M365 Apps for business, jazyk=MatchOS
-└─ desktop/                  # volitelné ikony na plochu
-   ├─ PlochaAll/
-   └─ PlochaUser/
-```
-
-> Pozn.: `INSTALL.bat`, `vpn.ps1`, `SetACL.exe`, `syspin.exe`, `elevate.exe` se sem
-> **nepřenášejí** — nahradil je `bootstrap.ps1` + winget. Site-specific věci
-> (Toshiba tiskárna, OpenVPN profil) řešíme zvlášť/ručně.
-
-## 1) Založení repa
-
-1. GitHub → **New repository** → název `wp-install-script` → **Public**.
-2. Nahrát soubory dle struktury výše (web UI „Add file → Upload files", nebo `git push`).
-3. `$Owner`/`$Repo` jsou v `bootstrap.ps1` už vyplněné na `adminjakubsamek/wp-install-script`.
-
-## 2) Spuštění na novém PC
-
-Repo je veřejné → žádný token není potřeba, soubory se tahají přes
-`raw.githubusercontent.com`. Čistý Win11 po prvním spuštění, otevřít
-**PowerShell jako správce**, vložit:
+Na čistém Win11 po prvním spuštění → **PowerShell jako správce** → vlož:
 
 ```powershell
 irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
 ```
 
-Skript: ověří admin práva → detekuje jazyk Windows → nainstaluje aplikace wingetem
-v nejnovějších verzích → stáhne a aplikuje tweaky a konfigy do temp složky →
-temp smaže → vypíše shrnutí → naplánuje restart.
+Na konci se PC restartuje za 30 s (zrušíš `shutdown /a`).
 
-**Log** každého běhu: `C:\ProgramData\wp-install\install_<datum>_<cas>.log`.
-**Náhled bez instalace** (jen výpis plánu): nahoře v `bootstrap.ps1` přepni
-`$PreviewOnly = $true` a spusť — nic se nenainstaluje.
+## Co skript dělá (v pořadí)
 
-### Instalované aplikace
+1. **Ověří práva správce** a začne psát log do `C:\ProgramData\wp-install\`.
+2. **Zjistí jazyk Windows** (cs/en/de, fallback cs) — podle něj se řídí jazyk aplikací.
+3. **Nainstaluje aplikace přes winget** (vždy nejnovější verze) — viz seznam níže.
+4. **Firefox** stáhne rovnou v lokalizované verzi přímo od Mozilly (dle jazyka Windows).
+5. **Microsoft 365 Apps for business** — stáhne ODT přes winget, nainstaluje Office
+   v **jednom jazyce** dle Windows, **bez aktivace** (aktivuje uživatel přihlášením).
+6. **Aplikuje Win11 tweaky** (vyčištěný preset Disassembler0 z `tweaks/`).
+7. **Aplikuje konfigurace** z `config/` (pdfsam, vlc) a vypne u Adobe Readeru
+   nabízení placeného Acrobatu.
+8. **Nainstaluje tiskárnu TOSHIBA-recepce** (ovladač z GitHub Release; lze vypnout).
+9. **Vlastní příkazy**: vypne BitLocker na C: + službu BDESVC, vypne UDP pro RDP a
+   potlačí varovný dialog přesměrování.
+10. **Uklidí** dočasné soubory, vypíše shrnutí (OK / neúspěšné) a restartuje.
+
+## Instalované aplikace
+
 Chrome, Firefox, 7-Zip, VLC, Adobe Reader, PDFsam, doPDF, **Oracle Java 8 (JRE)**,
 OpenVPN Community, TeamViewer, **Microsoft 365 Apps for business**.
 Total Commander se **neinstaluje**.
 
-- **Firefox** se instaluje rovnou jako lokalizovaný build přímo od Mozilly (jazyk dle Windows).
-- **Adobe Reader** = bezplatný Reader; nabídka upgradu na placený Acrobat je vypnutá
-  (`bAcroSuppressUpsell`), takže se chová jako čistý Reader.
-- **Java** = `Oracle.JavaRuntimeEnvironment` (klasická java.com, Java 8). Pozn.: komerční/úřední
-  použití Oracle Javy vyžaduje licenci od Oracle.
+## Jazyk aplikací (dle jazyka Windows)
 
-#### Microsoft 365 Apps
-Instaluje se přes Office Deployment Tool (ODT) podle `config/office/configuration.xml`:
-produkt **for business**, jazyk **`MatchOS`** (dle Windows, fallback en-us), tichá
-instalace, **bez aktivace** – licenci aktivuje uživatel přihlášením pod svým účtem.
-ODT `setup.exe` si skript stáhne **sám přes winget** (nejnovější verze), rozbalí do
-`%ProgramFiles%\OfficeDeploymentTool`, použije a po instalaci složku smaže. Do repa
-stačí jen `config/office/configuration.xml`.
-
-## 3) Jazyk programů (dle jazyka Windows)
-
-Skript přečte display language Windows (cs/en/de, fallback en) a podle toho:
-
-| Aplikace | Jak se řeší jazyk |
+| Aplikace | Jak |
 |---|---|
-| 7-Zip, VLC, Chrome, Adobe Reader | automaticky dle jazyka OS (multijazyčné) |
-| Firefox | lokalizovaný build přímo od Mozilly podle jazyka Windows |
-| doPDF | parametr instalátoru `-install_language=<cs/en/de>` |
-| Java (Oracle 8), OpenVPN, TeamViewer | bez UI jazyka / nerelevantní |
+| 7-Zip, VLC, Chrome, Adobe Reader | automaticky dle jazyka OS |
+| Firefox | lokalizovaný build přímo od Mozilly |
+| doPDF | parametr instalátoru `-install_language` |
+| Microsoft 365 | ODT config s jedním jazykem (cs-cz / en-us / de-de) |
+| Java, OpenVPN, TeamViewer | bez UI jazyka / nerelevantní |
 
-## 4) Co ještě ověřit na prvním stroji (v skriptu označeno „OVERIT")
+## Struktura repa
 
-- **TeamViewer** — winget balíček občas hlásí „installer hash mismatch" (chyba na straně
-  manifestu); když spadne, zkusit znovu později nebo přímý download z teamviewer.com.
-  Pozn.: komerční/úřední použití TeamVieweru vyžaduje licenci. Host varianta =
-  `TeamViewer.TeamViewer.Host` (bezobslužný přístup).
-- **doPDF** — ověřit, že winget předá `-install_language` instalátoru (jinak dořešit přes
-  přímý download MSI/EXE).
-- **Adobe Reader** — ověřit, že winget balíček je MUI a chytne jazyk OS.
-- **Ikony na plochu** — v repu je lepší držet je jako ZIP a v `bootstrap.ps1` rozbalit
-  (v kódu ponecháno jako TODO).
-- **winget na čistém OOBE** — na Win11 Pro bývá hned; pokud chybí, aktualizovat
-  „App Installer" ve Store.
-
-## Tiskárna TOSHIBA-recepce (volitelné, jen na pobočce)
-
-Tiskárna (IP 192.168.0.240) se instaluje **vždy** (`$InstallPrinter = $true`).
-Když ji na nějakém stroji nechceš, přepni nahoře v `bootstrap.ps1` na:
-
-```powershell
-$InstallPrinter = $false
+```
+wp-install-script/
+├─ bootstrap.ps1          # hlavní skript
+├─ README.md
+├─ tisk-recepce.ps1       # instalace tiskárny (volá ho bootstrap)
+├─ SetACL.exe             # práva tiskárny
+├─ tweaks/
+│  ├─ win10.ps1           # runner
+│  ├─ win10.psm1          # modul tweaků
+│  └─ install.preset      # vyčištěný preset
+└─ config/
+   ├─ pdfsam.reg
+   ├─ pdfsam.l4j.ini
+   └─ vlc.reg
 ```
 
-Soubory:
-- **`tisk-recepce.ps1`** a **`SetACL.exe`** → v **kořeni repa** (malé, stahují se přes raw).
-- **`ToshibaDRV.zip`** → ovladač je velký, do stromu repa se nevejde (limit 100 MB).
-  Nahraj ho jako **přílohu GitHub Release** (Releases → *Create a new release* →
-  tag např. `drivers` → *Attach binaries* → vyber `ToshibaDRV.zip` → *Publish release*).
-  Skript ho tahá z `releases/latest/download/ToshibaDRV.zip`, takže vždy z nejnovějšího release.
+**GitHub Release** (tag např. `drivers`) s přílohou **`ToshibaDRV.zip`** — ovladač
+tiskárny (velký soubor, do stromu repa se nevejde). Skript ho bere z
+`releases/latest/download/ToshibaDRV.zip`.
 
-`ToshibaDRV.zip` vyrob tak, že zazipuješ **obsah** složky `ToshibaDRV`
-(aby po rozbalení do `C:\Program Files\ToshibaDRV` vznikla cesta
-`C:\Program Files\ToshibaDRV\Driver\64bit\eSf6u.inf`).
+## Tiskárna
 
-> Pozn.: ovladač je jeden vícejazyčný balík (TOSHIBA e-STUDIO Universal Printer Driver 2),
-> jazyk dialogů se řídí jazykem Windows. Automatický download z webu Toshiby nejde –
-> stránka blokuje roboty a má víc verzí; proto pevná verze v Release.
+Instaluje se **vždy** (`$InstallPrinter = $true` nahoře v `bootstrap.ps1`). Kde ji
+nechceš, přepni na `$false`. ZIP musí mít v kořeni cestu `Driver\64bit\eSf6u.inf`
+(skript si INF i název ovladače najde sám).
 
-## Bezpečnost
+## Log a náhled
 
-- Repo je veřejné, takže do něj **nesmí** přijít nic citlivého. Po auditu v souborech
-  žádná hesla nejsou (NAS heslo, admin heslo i VPN PSK jsme odstranili).
-- OpenVPN `.ovpn` profily a certifikáty se sem **nedávají** — nasazují se ručně.
-- `bootstrap.ps1` se spouští přes `irm ... | iex` z veřejné URL — kdokoliv s odkazem
-  ho vidí. To je u provisioning skriptu bez tajemství v pořádku; jen v něm nesmí
-  nikdy skončit žádný credential.
+- Log každého běhu: `C:\ProgramData\wp-install\install_<datum>_<čas>.log`.
+- Náhled bez instalace: nahoře `$PreviewOnly = $true` → jen vypíše plán a skončí.
+
+## Poznámky
+
+- **Aktivace Office** a **VPN profily** se řeší ručně (skript instaluje jen programy).
+- **Oracle Java** — pro úřední/komerční použití formálně vyžaduje licenci od Oracle.
+- **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
+- **BitLocker** — vypnutí je záměrné (interní výjimka); ostatní se řeší jinde.
