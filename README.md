@@ -1,8 +1,12 @@
-## WELL PACK automatický instalační skript pro Windows 11
+# wp-install-script — nasazení nových PC (Všenory)
+
+Veřejné repo s jedním skriptem (`bootstrap.ps1`), který z čistého Windows 11 udělá
+hotový pracovní počítač. Vše se tahá z webu (winget + výrobci + tohle repo), žádná
+závislost na NASce ani na jednotce Q:.
 
 ## Spuštění
 
-Na čistém Windows 11 po prvním spuštění → **PowerShell jako správce** → vlož:
+Na čistém Win11 po prvním spuštění → **PowerShell jako správce** → vlož:
 
 ```powershell
 irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
@@ -14,22 +18,25 @@ Na konci se PC restartuje za 30 s (zrušíš `shutdown /a`).
 
 1. **Ověří práva správce** a začne psát log do `C:\ProgramData\wp-install\`.
 2. **Zjistí jazyk Windows** (cs/en/de, fallback cs) — podle něj se řídí jazyk aplikací.
-3. **Nainstaluje aplikace přes winget** (vždy nejnovější verze) — viz seznam níže.
-4. **Firefox** stáhne rovnou v lokalizované verzi přímo od Mozilly (dle jazyka Windows).
-5. **Microsoft 365 Apps for business** — stáhne ODT přes winget, nainstaluje Office
+3. **Nainstaluje aplikace přes winget** (vždy nejnovější verze) — viz seznam níže;
+   mimo jiné ověří/doinstaluje **Microsoft Teams** (nový klient).
+4. **Vynutí aktualizaci aplikací z Microsoft Store** (na pozadí, pokud je třeba).
+5. **Firefox** stáhne rovnou v lokalizované verzi přímo od Mozilly (dle jazyka Windows).
+6. **Microsoft 365 Apps for business** — stáhne ODT přes winget, nainstaluje Office
    v **jednom jazyce** dle Windows, **bez aktivace** (aktivuje uživatel přihlášením).
-6. **Aplikuje Win11 tweaky** (vyčištěný preset Disassembler0 z `tweaks/`).
-7. **Aplikuje konfigurace** z `config/` (pdfsam, vlc) a vypne u Adobe Readeru
+7. **Aplikuje Win11 tweaky** (vyčištěný preset Disassembler0 z `tweaks/`).
+8. **Aplikuje konfigurace** z `config/` (pdfsam, vlc) a vypne u Adobe Readeru
    nabízení placeného Acrobatu.
-8. **Nainstaluje tiskárnu TOSHIBA-recepce** (ovladač z GitHub Release; lze vypnout).
-9. **Vlastní příkazy**: vypne BitLocker na C: + službu BDESVC, vypne UDP pro RDP a
-   potlačí varovný dialog přesměrování.
-10. **Uklidí** dočasné soubory, vypíše shrnutí (OK / neúspěšné) a restartuje.
+9. **Nainstaluje tiskárnu TOSHIBA-recepce** (ovladač z GitHub Release; lze vypnout).
+10. **Vlastní příkazy**: vypne BitLocker na C: + službu BDESVC, vypne UDP pro RDP,
+   potlačí varovný dialog přesměrování a vypne automatické přidávání síťových tiskáren.
+11. **Uklidí** dočasné soubory, vypíše shrnutí (OK / neúspěšné) a restartuje.
 
 ## Instalované aplikace
 
 Chrome, Firefox, 7-Zip, VLC, Adobe Reader, PDFsam, doPDF, **Oracle Java 8 (JRE)**,
-OpenVPN Community, TeamViewer, **Microsoft 365 Apps for business**.
+OpenVPN Community, TeamViewer, **Microsoft Teams**, **Microsoft 365 Apps for business**.
+Plus aktualizace aplikací z Microsoft Store. Total Commander se **neinstaluje**.
 
 ## Jazyk aplikací (dle jazyka Windows)
 
@@ -73,3 +80,10 @@ nechceš, přepni na `$false`. ZIP musí mít v kořeni cestu `Driver\64bit\eSf6
 
 - Log každého běhu: `C:\ProgramData\wp-install\install_<datum>_<čas>.log`.
 - Náhled bez instalace: nahoře `$PreviewOnly = $true` → jen vypíše plán a skončí.
+
+## Poznámky
+
+- **Aktivace Office** a **VPN profily** se řeší ručně (skript instaluje jen programy).
+- **Oracle Java** — pro úřední/komerční použití formálně vyžaduje licenci od Oracle.
+- **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
+- **BitLocker** — vypnutí je záměrné (interní výjimka); ostatní se řeší jinde.

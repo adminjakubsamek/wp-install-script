@@ -85,6 +85,7 @@ $apps = @(
     @{ Id = 'Oracle.JavaRuntimeEnvironment' }                  # Oracle Java 8 (klasicka java.com); komercne licence!
     @{ Id = 'OpenVPNTechnologies.OpenVPN' }                    # OpenVPN Community klient (profily rucne)
     @{ Id = 'TeamViewer.TeamViewer' }                          # plny klient; obcas 'hash mismatch' (OVERIT)
+    @{ Id = 'Microsoft.Teams'; Scope = 'none' }                # novy Teams (work/school); MSIX -> bez --scope
 )
 
 # --- 5b) Nahled bez instalace ---
@@ -97,12 +98,13 @@ if ($PreviewOnly) {
         $cu = if ($a.ContainsKey('Custom')) { "  custom: $($a.Custom)" } else { '' }
         Write-Host ("  - {0}  (scope={1}){2}" -f $a.Id, $sc, $cu)
     }
-    Write-Host "`nFirefox: lokalizovany build primo od Mozilly (lang dle Windows)"
+    Write-Host "`nStore: vynuti aktualizaci aplikaci z Microsoft Store"
+    Write-Host "Firefox: lokalizovany build primo od Mozilly (lang dle Windows)"
     Write-Host "Microsoft 365 Apps for business: ODT, jazyk=MatchOS, aktivace rucne"
     Write-Host "`nTweaky: tweaks/win10.ps1 + win10.psm1 + install.preset"
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
-    Write-Host "Vlastni prikazy: BitLocker off (C: + BDESVC), RDP UDP off + dialog off"
+    Write-Host "Vlastni prikazy: BitLocker off (C: + BDESVC), RDP UDP off + dialog off, NCD auto-tiskarny off"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
     try { Stop-Transcript | Out-Null } catch {}
@@ -116,7 +118,7 @@ foreach ($a in $apps) {
                 '--accept-package-agreements','--accept-source-agreements',
                 '--disable-interactivity')
     $scope = if ($a.ContainsKey('Scope')) { $a.Scope } else { 'machine' }
-    $wgArgs += @('--scope', $scope)
+    if ($scope -ne 'none') { $wgArgs += @('--scope', $scope) }
     if ($a.ContainsKey('Custom')) { $wgArgs += @('--custom', $a.Custom) }
 
     Write-Host "[>] Instaluji $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
@@ -129,6 +131,14 @@ foreach ($a in $apps) {
         $failed += "$($a.Id) (kod $LASTEXITCODE)"
     }
 }
+
+# --- 5e) Aktualizace aplikaci z Microsoft Store (na pozadi, pokud je treba) ---
+try {
+    Write-Host "[*] Spoustim aktualizaci aplikaci z Microsoft Store..." -ForegroundColor Cyan
+    Get-CimInstance -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernAppManagement_AppManagement01' -ErrorAction Stop |
+        Invoke-CimMethod -MethodName UpdateScanMethod -ErrorAction Stop | Out-Null
+    Write-Host "    [i] Store aktualizace spustena (probiha na pozadi)." -ForegroundColor DarkGray
+} catch { Write-Warning "    Store aktualizace: $($_.Exception.Message)" }
 
 # --- 5d) Firefox - lokalizovany build primo od Mozilly (dle jazyka Windows) ---
 try {
@@ -288,6 +298,14 @@ try {
     Set-ItemProperty -Path $tsc -Name 'RedirectionWarningDialogVersion' -Value 1 -Type DWord
     Write-Host "    [i] RDP: UDP vypnuto, varovny dialog potlacen." -ForegroundColor DarkGray
 } catch { Write-Warning "    RDP tweaky: $($_.Exception.Message)" }
+
+# Vypnout automaticke pridavani sitovych zarizeni/tiskaren (NCD AutoSetup)
+try {
+    $ncd = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\NcdAutoSetup\Private'
+    if (-not (Test-Path $ncd)) { New-Item -Path $ncd -Force | Out-Null }
+    Set-ItemProperty -Path $ncd -Name 'AutoSetup' -Value 0 -Type DWord
+    Write-Host "    [i] Automaticke pridavani sitovych tiskaren vypnuto." -ForegroundColor DarkGray
+} catch { Write-Warning "    NcdAutoSetup: $($_.Exception.Message)" }
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
