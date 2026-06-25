@@ -11,6 +11,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - Skript vyžaduje **práva správce** (jinak se ukončí).
 - Na konci se počítač **restartuje za 30 s** — zrušíš `shutdown /a`.
 - **Náhled bez instalace**: nahoře ve skriptu přepni `$PreviewOnly = $true` → jen vypíše plán a skončí.
+- Skript na začátku **vypne QuickEdit** konzole, aby kliknutí do okna nepozastavilo běh.
 
 ---
 
@@ -24,14 +25,17 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - `$NamePrefix` — volitelná předpona názvu PC (např. `'WP-'`); prázdné = jen sériové číslo.
 - `$RemovePreinstalledOffice` — nejdřív odinstalovat OEM Office balast (`$true`).
 - `$RemoveThirdPartyAV` — nejdřív odinstalovat cizí antiviry (`$true`).
-- `$UserDesktopShortcuts` — zástupci na plochu uživatele (názvy `.lnk`).
+- `$UserDesktopShortcuts` — zástupci na plochu uživatele (názvy `.lnk`, lze i `*`).
 - `$ClearPublicDesktop` — smazat zástupce z veřejné plochy (`$true`).
+- `$SetWallpaper` / `$SetLockScreen` — nastavit tapetu / zamykací obrazovku všem (`$true`).
+- `$WallpaperFallback` / `$LockScreenFallback` — výchozí obrázek, když není v repu.
+- `$SetDefaultApps` — nasadit výchozí aplikace všem novým uživatelům z `config/appassoc.xml`.
 
 ---
 
 ## Průběh instalace (v pořadí)
 
-1. **Kontrola práv správce** + start logu na plochu admina.
+1. **Kontrola práv správce** + vypnutí QuickEditu + start logu na plochu admina.
 2. **Detekce jazyka Windows** → `cs` / `en` / `de` (fallback `cs`); řídí jazyk aplikací.
 3. **Přejmenování počítače** podle sériového čísla z BIOSu (projeví se po restartu).
 4. **Ověření wingetu** (najde i na čerstvém stroji bez PATH).
@@ -46,11 +50,15 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 10. **Win11 tweaky** — vyčištěný preset Disassembler0 (`tweaks/`).
 11. **Konfigurace aplikací** — pdfsam, vlc, vypnutí Adobe upsellu.
 12. **Tiskárna TOSHIBA-recepce** (volitelné; ovladač z GitHub Release).
-13. **Vlastní příkazy** — BitLocker, RDP, NCD, odblokování feature updates, časové pásmo + sync.
+13. **Vlastní příkazy** — BitLocker, RDP, NCD, odblokování feature updates, časové pásmo + sync,
+    **napájení = nejvyšší výkon**, **System Restore limit 5 %**, **popisek disku C: = OS**,
+    **zapnutí Defender SmartScreen + blokování PUA**.
 14. **Personalizace** — hlavní panel, Start, plocha (i pro nové uživatele).
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
-16. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu).
-17. **Úklid dočasných souborů**, výpis shrnutí, **restart**.
+16. **Tapeta + zamykací obrazovka** — pro všechny uživatele (PersonalizationCSP).
+16b. **Výchozí aplikace pro všechny** — DISM import `config/appassoc.xml` (prohlížeč, .pdf, mailto, 7-Zip…).
+17. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu).
+18. **Úklid dočasných souborů**, výpis shrnutí, **restart**.
 
 ---
 
@@ -111,6 +119,15 @@ Plus **aktualizace aplikací z Microsoft Store**.
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location` → `Value = Allow`
 - **Automatické časové pásmo** (`HKLM\SYSTEM\CurrentControlSet\Services\tzautoupdate`):
   - `Start = 3` (zapnuto, on-demand).
+- **Tapeta + zamykací obrazovka pro všechny** (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP`):
+  - `DesktopImagePath` / `DesktopImageUrl` + `DesktopImageStatus = 1`.
+  - `LockScreenImagePath` / `LockScreenImageUrl` + `LockScreenImageStatus = 1`.
+- **Obrázek pozadí na přihlašovací obrazovce** (`HKLM\SOFTWARE\Policies\Microsoft\Windows\System`):
+  - `DisableLogonBackgroundImage = 0` (zobrazovat).
+- **Defender SmartScreen / PUA** (Řízení aplikací a prohlížečů):
+  - `Set-MpPreference -PUAProtection Enabled` (blokovat potenciálně nežádoucí aplikace).
+  - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer` → `SmartScreenEnabled = Warn`.
+  - `HKLM\SOFTWARE\Policies\Microsoft\Windows\System` → `EnableSmartScreen = 1`, `ShellSmartScreenLevel = Warn`.
 
 ### Pro uživatele (HKCU + Default profil `C:\Users\Default\NTUSER.DAT`)
 
@@ -138,6 +155,9 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 - **tzautoupdate** → zapnuto (Start=3); časové pásmo nastaveno na **Central European Standard Time**.
 - **Naplánovaná úloha** „Microsoft Compatibility Appraiser" → povolena a spuštěna (data pro kontrolu kompatibility upgradu).
 - **Název počítače** → změněn na sériové číslo z BIOSu (max 15 znaků; nepoužitelná čísla se přeskočí).
+- **Napájení** → aktivní plán **High performance** + power mode **Best performance** (na síti i baterii).
+- **System Restore** → limit stínové kopie **5 % disku C:** (`vssadmin resize shadowstorage`).
+- **Popisek disku C:** → nastaven na **OS**.
 
 ---
 
@@ -148,6 +168,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 - **Připnutí na hlavní panel**: `C:\Users\Default\AppData\Local\Microsoft\Windows\Shell\LayoutModification.xml`.
 - **Zástupci na ploše uživatele**: kopie `.lnk` do `C:\Users\Default\Desktop`.
 - **Veřejná plocha**: smazání `C:\Users\Public\Desktop\*.lnk` (když `$ClearPublicDesktop=$true`).
+- **Tapeta/zamykací obrazovka**: obrázky uloženy do `C:\ProgramData\WPBranding`.
 - **PDFsam**: `pdfsam.l4j.ini` → `C:\Program Files\PDFsam Basic`.
 - **Tiskový ovladač**: rozbalen do `C:\Program Files\ToshibaDRV`.
 - **Dočasná složka** `%TEMP%\provision-xxxxxxxx` — na konci smazána.
@@ -158,9 +179,36 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 
 - **Start vlevo**, **lupa jako ikona**, **sloučené ikony oken**, **viditelné přípony**.
 - **Na ploše**: Tento počítač, Složka uživatele, Koš.
-- **Připnutí na panel v pořadí**: Firefox → Chrome → Průzkumník → Outlook → Teams → Výstřižky (**Edge odepnut**).
+- **Připnutí na panel v pořadí**: Chrome → Firefox → Průzkumník → Outlook → Teams → Výstřižky (**Edge odepnut**).
 - Připnutí na panel **platí pro nově přihlášené uživatele** (zakládá se z Default profilu); na účtu, pod kterým běží instalace, se panel nemění.
 - „Sloučené ikony oken" = `TaskbarGlomLevel=0`; pro opačné chování (nikdy neslučovat) dej `2`.
+
+---
+
+## Tapeta a zamykací obrazovka
+
+- Nastaví se **všem uživatelům** přes PersonalizationCSP a **zamknou** (uživatel je v Nastavení nezmění).
+- Obrázky skript hledá v repu: `config/branding/wallpaper.jpg` a `config/branding/lockscreen.jpg`.
+- Když v repu nejsou, použije **výchozí Win11 `img0.jpg`** (modrá „Bloom"). Obrázky se vždy zkopírují do `C:\ProgramData\WPBranding` a CSP ukazuje na tu kopii (stabilní cesta).
+- Na přihlašovací obrazovce se zobrazuje obrázek zamykací obrazovky.
+
+---
+
+## Výchozí aplikace a asociace souborů (vč. 7-Zip)
+
+Výchozí aplikace pro všechny **nově založené** uživatele se nasazují přes DISM z jednoho souboru
+`config/appassoc.xml` (prohlížeč Chrome pro http/https/.htm/.html/.mhtml, .pdf → Adobe, mailto → Outlook,
+archivy → 7-Zip atd.). Soubor vznikne z referenčního stroje, kde máš vše nastavené tak, jak chceš:
+
+1. Na referenčním PC nastav výchozí aplikace + asociace 7-Zip (přesně jak chceš).
+2. Spusť v PowerShellu jako správce:
+   ```powershell
+   dism /online /export-defaultappassociations:"$env:USERPROFILE\Desktop\appassoc.xml"
+   ```
+3. Vzniklý `appassoc.xml` nahraj do repa jako `config/appassoc.xml`.
+
+Skript ho pak na každém stroji naimportuje (`dism /online /import-defaultappassociations`).
+Pozn.: import platí pro **nové uživatele** (ne pro účet, pod kterým běží instalace).
 
 ---
 
@@ -186,7 +234,11 @@ wp-install-script/
 └─ config/
    ├─ pdfsam.reg
    ├─ pdfsam.l4j.ini
-   └─ vlc.reg
+   ├─ vlc.reg
+   ├─ appassoc.xml        # vychozi aplikace (DISM) - vygeneruj z ref. stroje
+   └─ branding/           # volitelné
+      ├─ wallpaper.jpg
+      └─ lockscreen.jpg
 ```
 
 - **GitHub Release** (tag např. `drivers`) s přílohou **`ToshibaDRV.zip`** — ovladač tiskárny (velký soubor mimo strom repa). Skript bere z `releases/latest/download/ToshibaDRV.zip`.
@@ -209,6 +261,8 @@ wp-install-script/
 - **Tiskárny**, **migrace dat**, **Chrome** (kontrola záložek a hesel).
 - **OneDrive** – přihlášení.
 - **Heslo počítače** + **ESET šifrování**.
+- **Kontrola povolení Defenderu**.
+- **Nastavit heslo k účtu admin (Windows)**.
 - **Microsoft 365** – aktivace přihlášením uživatele.
 - **VPN profily** (OpenVPN / Azure VPN) – import ručně.
 
@@ -216,10 +270,13 @@ wp-install-script/
 
 ## Poznámky a upozornění
 
-- **BitLocker** — vypnutí je záměrné (interní výjimka). Pokud je C: opravdu zašifrované, zákaz služby BDESVC může pozastavit dešifrování v půlce — řeší se ručně.
+- **BitLocker** — vypnutí je záměrné (interní výjimka). Na nešifrovaném disku `manage-bde -off` hlásí chybu (potlačeno); je-li C: opravdu zašifrované, zákaz služby BDESVC může pozastavit dešifrování v půlce.
 - **Oracle Java** — pro komerční/úřední použití formálně vyžaduje licenci Oracle.
 - **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
 - **Odinstalace cizích AV** — best-effort; McAfee/Norton můžou potřebovat vendor nástroj.
-- **Připnutí na panel a zástupci na ploše** — platí pro nově přihlášené uživatele (Default profil).
-- **Pořadí ikon v oznamovací oblasti (u hodin)** — Windows 11 to skriptem spolehlivě nenastaví (položky vznikají per-aplikace až při prvním spuštění pod uživatelem a pořadí není nikde stabilně vystaveno); řeší se ručním přetažením.
+- **Zástupci na ploše** — Chrome, Firefox, Outlook (classic), Word, Excel, TeamViewer; kopírují se do Default profilu (noví uživatelé) **i na plochu admina** (aby je bylo vidět hned). Smazatelné.
+- **Připnutí na panel** — platí pro nově přihlášené uživatele (Default profil).
+- **Tapeta a zamykací obrazovka** — přes PersonalizationCSP se nastaví a **zamknou** (uživatel je nezmění).
+- **Pořadí ikon v oznamovací oblasti (u hodin)** — Windows 11 to skriptem spolehlivě nenastaví; řeší se ručním přetažením.
+- **Konzole** — QuickEdit je na začátku vypnut, aby kliknutí do okna nepozastavilo běh.
 - **Log na ploše** — každý běh vytvoří nový soubor s časovým razítkem; staré klidně smaž.

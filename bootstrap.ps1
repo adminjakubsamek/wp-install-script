@@ -25,8 +25,15 @@ $RenameToSerial = $true               # prejmenovat pocitac dle serioveho cisla 
 $NamePrefix     = ''                  # volitelna predpona nazvu (napr. 'WP-'); prazdne = jen serial
 $RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store OneNote
 $RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
-$UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook.lnk','Word.lnk','Excel.lnk')  # smazatelne kopie na plochu uzivatele
+$UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook*.lnk','Word.lnk','Excel.lnk','TeamViewer.lnk')  # smazatelne kopie na plochu (Outlook* = i 'Outlook (classic)')
 $ClearPublicDesktop       = $true     # smazat (ne-smazatelne) zastupce z verejne plochy
+$SetWallpaper             = $true     # nastavit tapetu vsem uzivatelum
+$SetLockScreen            = $true     # nastavit zamykaci obrazovku vsem uzivatelum
+# Obrazky: skript zkusi stahnout z repa config/branding/{wallpaper.jpg,lockscreen.jpg};
+# kdyz tam nejsou, pouzije vychozi Win11 img0.jpg.
+$WallpaperFallback        = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
+$LockScreenFallback       = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
+$SetDefaultApps           = $true     # nasadit vychozi aplikace vsem (nove) uzivatelum z config/appassoc.xml
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +44,22 @@ $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Spust tento skript v ELEVOVANEM PowerShellu (Run as administrator)."
 }
+
+# --- 0a) Vypnout QuickEdit konzole (klik do okna jinak pozastavi beh az do stisku klavesy) ---
+try {
+    Add-Type -Name WPConsole -Namespace WP -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@ -ErrorAction SilentlyContinue
+    $h = [WP.WPConsole]::GetStdHandle(-10)   # STD_INPUT_HANDLE
+    $m = 0
+    if ([WP.WPConsole]::GetConsoleMode($h, [ref]$m)) {
+        $m = ($m -band (-bnot 0x40)) -band (-bnot 0x20)   # vypnout QuickEdit (0x40) a Insert (0x20)
+        $m = $m -bor 0x80                                  # ENABLE_EXTENDED_FLAGS
+        [WP.WPConsole]::SetConsoleMode($h, $m) | Out-Null
+    }
+} catch {}
 
 # --- 0b) Log (transcript) na plochu admina (ne do C:) ---
 $adminDesktop = [Environment]::GetFolderPath('DesktopDirectory')
@@ -138,10 +161,13 @@ if ($PreviewOnly) {
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
     Write-Host "Prejmenovat dle serioveho cisla: $RenameToSerial (predpona '$NamePrefix')"
-    Write-Host "Personalizace: Start vlevo, lupa ikona, pripony on, ikony plochy, taskbar pripnuti (FF,Chrome,Pruzkumnik,Outlook,Teams,Vystrizky)"
+    Write-Host "Personalizace: Start vlevo, lupa ikona, pripony on, ikony plochy, taskbar pripnuti (Chrome,FF,Pruzkumnik,Outlook,Teams,Vystrizky)"
     Write-Host "Poznamka na plochu admina: ESET, tiskarny, migrace, Chrome, OneDrive, heslo+sifrovani"
     Write-Host "Predinstalacni uklid: OEM Office=$RemovePreinstalledOffice, cizi AV=$RemoveThirdPartyAV"
     Write-Host "Plocha uzivatele (smazatelne): $($UserDesktopShortcuts -join ', '); vycistit verejnou=$ClearPublicDesktop"
+    Write-Host "Tapeta=$SetWallpaper, zamykaci obrazovka=$SetLockScreen (vsem uzivatelum, PersonalizationCSP)"
+    Write-Host "Vychozi aplikace pro vsechny (DISM): $SetDefaultApps (config/appassoc.xml)"
+    Write-Host "Napajeni: nejvyssi vykon; System Restore 5%; popisek C: = OS"
     Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
@@ -392,7 +418,7 @@ Write-Host "[*] Vlastni prikazy..." -ForegroundColor Cyan
 
 # BitLocker: vypnout sifrovani C: a sluzbu BDESVC (dle interni vyjimky)
 try {
-    & manage-bde.exe -off C: 2>$null
+    & manage-bde.exe -off C: *>$null   # na nesifrovanem disku hlasi chybu - swallneme
     Set-Service -Name 'BDESVC' -StartupType Disabled -ErrorAction SilentlyContinue
     Stop-Service -Name 'BDESVC' -Force -ErrorAction SilentlyContinue
     Write-Host "    [i] BitLocker C: vypinan, sluzba BDESVC disabled." -ForegroundColor DarkGray
@@ -451,6 +477,37 @@ try {
     Write-Host "    [i] Casove pasmo (CET + auto dle polohy) a synchronizace casu nastaveny." -ForegroundColor DarkGray
 } catch { $m = "Cas/pasmo: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
+# Napajeci plan = nejvyssi vykon (sit i baterie) + power mode Best performance
+try {
+    & powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c *>$null          # High performance plan
+    & powercfg /overlaysetactive ded574b5-45a0-4f42-8737-46345c09c238 *>$null   # power mode = Best performance
+    Write-Host "    [i] Napajeni: nejvyssi vykon (sit i baterie)." -ForegroundColor DarkGray
+} catch { $m = "Napajeni: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
+# System Restore - limit stinove kopie na 5 % disku C:
+try {
+    & vssadmin resize shadowstorage /for=C: /on=C: /maxsize=5% *>$null
+    if ($LASTEXITCODE -ne 0) { & vssadmin add shadowstorage /for=C: /on=C: /maxsize=5% *>$null }
+    Write-Host "    [i] System Restore: limit 5 % disku C:." -ForegroundColor DarkGray
+} catch { $m = "System Restore limit: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
+# Popisek disku C: -> OS
+try {
+    Set-Volume -DriveLetter C -NewFileSystemLabel 'OS' -ErrorAction Stop
+    Write-Host "    [i] Popisek disku C: = 'OS'." -ForegroundColor DarkGray
+} catch {
+    try { & label.exe C: OS } catch { $m = "Popisek disku C:: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+}
+
+# Defender - zapnout "Rizeni aplikaci a prohlizecu" (reputace + blokovani PUA) pro vsechny
+try {
+    Set-MpPreference -PUAProtection Enabled -ErrorAction SilentlyContinue
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Warn /f *>$null
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableSmartScreen /t REG_DWORD /d 1 /f *>$null
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v ShellSmartScreenLevel /t REG_SZ /d Warn /f *>$null
+    Write-Host "    [i] Defender: SmartScreen + blokovani PUA zapnuto." -ForegroundColor DarkGray
+} catch { $m = "Defender SmartScreen/PUA: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
 # --- 8d) Personalizace: hlavni panel, Start, plocha (aktualni + novi uzivatele) ---
 # HKCU se tyka jen aktualniho uctu; aby nastaveni dostali i nove zalozeni uzivatele,
 # zapisujeme zaroven do Default hive (C:\Users\Default\NTUSER.DAT).
@@ -498,8 +555,8 @@ try {
     $ol = Find-Lnk @('Outlook.lnk','Outlook (classic).lnk','Microsoft Outlook.lnk')
 
     $pins = ''
-    if ($ff) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$ff`" />`r`n" }
     if ($gc) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$gc`" />`r`n" }
+    if ($ff) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$ff`" />`r`n" }
     $pins += "        <taskbar:DesktopApp DesktopApplicationID=`"Microsoft.Windows.Explorer`" />`r`n"
     if ($ol) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$ol`" />`r`n" }
     $pins += "        <taskbar:UWA AppUserModelID=`"MSTeams_8wekyb3d8bbwe!MSTeams`" />`r`n"
@@ -524,7 +581,7 @@ $pins      </taskbar:TaskbarPinList>
     $shellDir = 'C:\Users\Default\AppData\Local\Microsoft\Windows\Shell'
     if (-not (Test-Path $shellDir)) { New-Item -ItemType Directory -Path $shellDir -Force | Out-Null }
     Set-Content -Path (Join-Path $shellDir 'LayoutModification.xml') -Value $xml -Encoding UTF8
-    Write-Host "    [i] Taskbar pripnuti (Firefox, Chrome, Pruzkumnik, Outlook, Teams, Vystrizky) pro nove uzivatele." -ForegroundColor DarkGray
+    Write-Host "    [i] Taskbar pripnuti (Chrome, Firefox, Pruzkumnik, Outlook, Teams, Vystrizky) pro nove uzivatele." -ForegroundColor DarkGray
 } catch { Write-Warning "    Taskbar pripnuti: $($_.Exception.Message)" }
 
 # --- 8e) Poznamka na plochu admina (co dodelat po instalaci) ---
@@ -540,6 +597,8 @@ try {
         '• Google Chrome – záložky a hesla (kontrola)'
         '• OneDrive – přihlášení'
         '• Heslo počítače + ESET šifrování'
+        '• Kontrola povolení Defenderu'
+        '• Nastavit heslo k účtu admin (Windows)'
     )
     # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
     $problems = @()
@@ -568,8 +627,9 @@ try {
     foreach ($name in $UserDesktopShortcuts) {
         $lnk = Get-ChildItem -Path $startRoot -Recurse -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($lnk) {
-            Copy-Item $lnk.FullName -Destination $defDesk -Force -ErrorAction SilentlyContinue
-            Write-Host "    [+] plocha uzivatele: $($lnk.Name)" -ForegroundColor DarkGray
+            Copy-Item $lnk.FullName -Destination $defDesk      -Force -ErrorAction SilentlyContinue   # novi uzivatele
+            Copy-Item $lnk.FullName -Destination $adminDesktop -Force -ErrorAction SilentlyContinue   # aby je videl i admin
+            Write-Host "    [+] plocha: $($lnk.Name)" -ForegroundColor DarkGray
         } else {
             Write-Host "    [-] zastupce nenalezen: $name" -ForegroundColor DarkGray
         }
@@ -579,6 +639,56 @@ try {
         Write-Host "    [i] Verejna plocha vycistena (nesmazatelni zastupci pryc)." -ForegroundColor DarkGray
     }
 } catch { Write-Warning "    Zastupci na plochu: $($_.Exception.Message)" }
+
+# --- 8g) Tapeta + zamykaci obrazovka pro vsechny uzivatele (PersonalizationCSP) ---
+Write-Host "[*] Tapeta a zamykaci obrazovka..." -ForegroundColor Cyan
+try {
+    $brandDir = 'C:\ProgramData\WPBranding'
+    if (-not (Test-Path $brandDir)) { New-Item -ItemType Directory -Path $brandDir -Force | Out-Null }
+
+    # obrazky drzime v $brandDir (i vychozi Win11), aby CSP mel stabilni cestu mimo C:\Windows
+    $wall = "$brandDir\wallpaper.jpg"
+    try { Get-RepoFile -Path 'config/branding/wallpaper.jpg'  -OutFile $wall } catch { Copy-Item $WallpaperFallback  $wall -Force -ErrorAction SilentlyContinue }
+    $lock = "$brandDir\lockscreen.jpg"
+    try { Get-RepoFile -Path 'config/branding/lockscreen.jpg' -OutFile $lock } catch { Copy-Item $LockScreenFallback $lock -Force -ErrorAction SilentlyContinue }
+
+    $csp = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+    if (-not (Test-Path $csp)) { New-Item -Path $csp -Force | Out-Null }
+
+    if ($SetWallpaper -and (Test-Path $wall)) {
+        Set-ItemProperty -Path $csp -Name 'DesktopImagePath'   -Value $wall -Type String
+        Set-ItemProperty -Path $csp -Name 'DesktopImageUrl'    -Value $wall -Type String
+        Set-ItemProperty -Path $csp -Name 'DesktopImageStatus' -Value 1 -Type DWord
+        Write-Host "    [i] Tapeta: $wall" -ForegroundColor DarkGray
+    }
+    if ($SetLockScreen -and (Test-Path $lock)) {
+        Set-ItemProperty -Path $csp -Name 'LockScreenImagePath'   -Value $lock -Type String
+        Set-ItemProperty -Path $csp -Name 'LockScreenImageUrl'    -Value $lock -Type String
+        Set-ItemProperty -Path $csp -Name 'LockScreenImageStatus' -Value 1 -Type DWord
+        Write-Host "    [i] Zamykaci obrazovka: $lock" -ForegroundColor DarkGray
+    }
+    # ukazovat obrazek zamykaci obrazovky i na prihlasovaci obrazovce (0 = ukazovat)
+    $sysPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+    if (-not (Test-Path $sysPol)) { New-Item -Path $sysPol -Force | Out-Null }
+    Set-ItemProperty -Path $sysPol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
+} catch { $m = "Tapeta/zamykaci obrazovka: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
+# --- 8h) Vychozi aplikace pro vsechny (nove) uzivatele - DISM import ---
+if ($SetDefaultApps) {
+    try {
+        Get-RepoFile -Path 'config/appassoc.xml' -OutFile "$work\appassoc.xml"
+        & dism.exe /Online /Import-DefaultAppAssociations:"$work\appassoc.xml" *>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    [i] Vychozi aplikace nasazeny (plati pro nove uzivatele)." -ForegroundColor DarkGray
+        } else {
+            $m = "Vychozi aplikace: DISM import skoncil s kodem $LASTEXITCODE"
+            Write-Warning "    $m"; $script:Issues += $m
+        }
+    } catch {
+        $m = "Vychozi aplikace: chybi config/appassoc.xml v repu nebo import selhal ($($_.Exception.Message))"
+        Write-Warning "    $m"; $script:Issues += $m
+    }
+}
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
