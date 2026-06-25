@@ -167,7 +167,7 @@ if ($PreviewOnly) {
     Write-Host "Plocha uzivatele (smazatelne): $($UserDesktopShortcuts -join ', '); vycistit verejnou=$ClearPublicDesktop"
     Write-Host "Tapeta=$SetWallpaper, zamykaci obrazovka=$SetLockScreen (vsem uzivatelum, PersonalizationCSP)"
     Write-Host "Vychozi aplikace pro vsechny (DISM): $SetDefaultApps (config/appassoc.xml)"
-    Write-Host "Napajeni: nejvyssi vykon; System Restore 5%; popisek C: = OS"
+    Write-Host "Napajeni: nejvyssi vykon, uspavani ze site=Nikdy; System Restore 5%; popisek C: = OS"
     Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
@@ -481,7 +481,8 @@ try {
 try {
     & powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c *>$null          # High performance plan
     & powercfg /overlaysetactive ded574b5-45a0-4f42-8737-46345c09c238 *>$null   # power mode = Best performance
-    Write-Host "    [i] Napajeni: nejvyssi vykon (sit i baterie)." -ForegroundColor DarkGray
+    & powercfg /change standby-timeout-ac 0 *>$null                             # uspavani pri napajeni ze site = Nikdy
+    Write-Host "    [i] Napajeni: nejvyssi vykon; uspavani ze site = Nikdy." -ForegroundColor DarkGray
 } catch { $m = "Napajeni: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
 # System Restore - limit stinove kopie na 5 % disku C:

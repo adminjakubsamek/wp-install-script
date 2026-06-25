@@ -51,7 +51,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 11. **Konfigurace aplikací** — pdfsam, vlc, vypnutí Adobe upsellu.
 12. **Tiskárna TOSHIBA-recepce** (volitelné; ovladač z GitHub Release).
 13. **Vlastní příkazy** — BitLocker, RDP, NCD, odblokování feature updates, časové pásmo + sync,
-    **napájení = nejvyšší výkon**, **System Restore limit 5 %**, **popisek disku C: = OS**,
+    **napájení = nejvyšší výkon** (uspávání ze sítě = Nikdy), **System Restore limit 5 %**, **popisek disku C: = OS**,
     **zapnutí Defender SmartScreen + blokování PUA**.
 14. **Personalizace** — hlavní panel, Start, plocha (i pro nové uživatele).
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
@@ -155,7 +155,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 - **tzautoupdate** → zapnuto (Start=3); časové pásmo nastaveno na **Central European Standard Time**.
 - **Naplánovaná úloha** „Microsoft Compatibility Appraiser" → povolena a spuštěna (data pro kontrolu kompatibility upgradu).
 - **Název počítače** → změněn na sériové číslo z BIOSu (max 15 znaků; nepoužitelná čísla se přeskočí).
-- **Napájení** → aktivní plán **High performance** + power mode **Best performance** (na síti i baterii).
+- **Napájení** → aktivní plán **High performance** + power mode **Best performance** (na síti i baterii); **uspávání při napájení ze sítě = Nikdy**.
 - **System Restore** → limit stínové kopie **5 % disku C:** (`vssadmin resize shadowstorage`).
 - **Popisek disku C:** → nastaven na **OS**.
 
