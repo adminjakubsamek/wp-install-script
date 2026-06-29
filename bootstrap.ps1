@@ -86,6 +86,26 @@ function Get-RepoFile {
     Write-Host "    [+] $Path" -ForegroundColor DarkGray
 }
 
+function Get-RepoFileQuiet {
+    # stahne soubor z repa; pri 404 NEhazi chybu (zadny sum v logu), vraci $true/$false
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
+    $uri = "https://raw.githubusercontent.com/$Owner/$Repo/$Ref/$Path"
+    try {
+        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+        $hc = New-Object System.Net.Http.HttpClient
+        $resp = $hc.GetAsync($uri).GetAwaiter().GetResult()
+        $ok = $false
+        if ($resp.IsSuccessStatusCode) {
+            $bytes = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+            $dir = Split-Path $OutFile -Parent
+            if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            [System.IO.File]::WriteAllBytes($OutFile, $bytes)
+            $ok = $true
+        }
+        $hc.Dispose(); return $ok
+    } catch { return $false }
+}
+
 # --- 3) Detekce jazyka Windows (display language) -> cs/en/de ---
 try   { $tag = (Get-WinUserLanguageList)[0].LanguageTag }   # napr. cs-CZ
 catch { $tag = (Get-Culture).Name }
@@ -259,8 +279,8 @@ foreach ($a in $apps) {
 
     Write-Host "[>] Instaluji $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
     & $winget @wgArgs
-    # winget: 0 = OK, -1978335189 = uz nainstalovano/no upgrade. Bereme jako OK.
-    if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189) {
+    # winget: 0 = OK, -1978335189 = no upgrade, -1978334963 = uz nainstalovano (MSIX). Vse bereme jako OK.
+    if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189 -or $LASTEXITCODE -eq -1978334963) {
         $ok += $a.Id
     } else {
         Write-Warning "    $($a.Id) skoncil s kodem $LASTEXITCODE"
@@ -517,7 +537,7 @@ try {
         Set-LocalUser  -Name $AdminUser -PasswordNeverExpires $true -ErrorAction SilentlyContinue
         Enable-LocalUser -Name $AdminUser -ErrorAction SilentlyContinue
         $adminGrp = Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue   # Administrators (locale-safe)
-        if ($adminGrp) { try { Add-LocalGroupMember -Group $adminGrp -Member $AdminUser -ErrorAction Stop } catch {} }
+        if ($adminGrp) { Add-LocalGroupMember -Group $adminGrp -Member $AdminUser -ErrorAction SilentlyContinue }
         Write-Host "    [i] Ucet '$AdminUser': admin prava, heslo bez expirace (heslo nastav rucne)." -ForegroundColor DarkGray
     } else {
         $m = "Ucet '$AdminUser' neexistuje - vytvor rucne vcetne hesla"
@@ -603,10 +623,17 @@ $pins      </taskbar:TaskbarPinList>
   </CustomTaskbarLayoutCollection>
 </LayoutModificationTemplate>
 "@
+    $enc = New-Object System.Text.UTF8Encoding($false)   # bez BOM (Win11 je vybiravy)
     $shellDir = 'C:\Users\Default\AppData\Local\Microsoft\Windows\Shell'
     if (-not (Test-Path $shellDir)) { New-Item -ItemType Directory -Path $shellDir -Force | Out-Null }
-    Set-Content -Path (Join-Path $shellDir 'LayoutModification.xml') -Value $xml -Encoding UTF8
-    Write-Host "    [i] Taskbar pripnuti (Chrome, Firefox, Pruzkumnik, Outlook, Teams, Vystrizky) pro nove uzivatele." -ForegroundColor DarkGray
+    [System.IO.File]::WriteAllText((Join-Path $shellDir 'LayoutModification.xml'), $xml, $enc)   # starsi buildy / novi uzivatele
+    # Win11 24H2/25H2: Default-profile XML uz na taskbar nefunguje -> policy pres LayoutXMLPath
+    $tbDir = 'C:\ProgramData\WPBranding'
+    if (-not (Test-Path $tbDir)) { New-Item -ItemType Directory -Path $tbDir -Force | Out-Null }
+    $tbXml = Join-Path $tbDir 'TaskbarLayout.xml'
+    [System.IO.File]::WriteAllText($tbXml, $xml, $enc)
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v LayoutXMLPath /t REG_SZ /d $tbXml /f *>$null
+    Write-Host "    [i] Taskbar pripnuti (Chrome, Firefox, Pruzkumnik, Outlook, Teams, Vystrizky) - policy LayoutXMLPath, projevi se po restartu." -ForegroundColor DarkGray
 } catch { Write-Warning "    Taskbar pripnuti: $($_.Exception.Message)" }
 
 # --- 8e) Poznamka na plochu admina (co dodelat po instalaci) ---
@@ -674,9 +701,9 @@ try {
 
     # obrazky drzime v $brandDir (i vychozi Win11), aby CSP mel stabilni cestu mimo C:\Windows
     $wall = "$brandDir\wallpaper.jpg"
-    try { Get-RepoFile -Path 'config/branding/wallpaper.jpg'  -OutFile $wall } catch { Copy-Item $WallpaperFallback  $wall -Force -ErrorAction SilentlyContinue }
+    if (-not (Get-RepoFileQuiet -Path 'config/branding/wallpaper.jpg'  -OutFile $wall)) { Copy-Item $WallpaperFallback  $wall -Force -ErrorAction SilentlyContinue }
     $lock = "$brandDir\lockscreen.jpg"
-    try { Get-RepoFile -Path 'config/branding/lockscreen.jpg' -OutFile $lock } catch { Copy-Item $LockScreenFallback $lock -Force -ErrorAction SilentlyContinue }
+    if (-not (Get-RepoFileQuiet -Path 'config/branding/lockscreen.jpg' -OutFile $lock)) { Copy-Item $LockScreenFallback $lock -Force -ErrorAction SilentlyContinue }
 
     $csp = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
     if (-not (Test-Path $csp)) { New-Item -Path $csp -Force | Out-Null }
@@ -701,8 +728,7 @@ try {
 
 # --- 8h) Vychozi aplikace pro vsechny (nove) uzivatele - DISM import ---
 if ($SetDefaultApps) {
-    try {
-        Get-RepoFile -Path 'config/appassoc.xml' -OutFile "$work\appassoc.xml"
+    if (Get-RepoFileQuiet -Path 'config/appassoc.xml' -OutFile "$work\appassoc.xml") {
         & dism.exe /Online /Import-DefaultAppAssociations:"$work\appassoc.xml" *>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "    [i] Vychozi aplikace nasazeny (plati pro nove uzivatele)." -ForegroundColor DarkGray
@@ -710,9 +736,9 @@ if ($SetDefaultApps) {
             $m = "Vychozi aplikace: DISM import skoncil s kodem $LASTEXITCODE"
             Write-Warning "    $m"; $script:Issues += $m
         }
-    } catch {
-        $m = "Vychozi aplikace: chybi config/appassoc.xml v repu nebo import selhal ($($_.Exception.Message))"
-        Write-Warning "    $m"; $script:Issues += $m
+    } else {
+        $m = "Vychozi aplikace: config/appassoc.xml zatim neni v repu (preskoceno - vygeneruj DISM exportem)"
+        Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
     }
 }
 

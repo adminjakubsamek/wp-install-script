@@ -171,7 +171,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 
 - **Log běhu**: `…\Desktop\install_<datum>_<čas>.log` (na ploše admina; **žádný zápis do `C:\ProgramData`**).
 - **Poznámka pro admina**: `…\Desktop\ADMIN - po instalaci.txt`.
-- **Připnutí na hlavní panel**: `C:\Users\Default\AppData\Local\Microsoft\Windows\Shell\LayoutModification.xml`.
+- **Připnutí na hlavní panel**: `C:\ProgramData\WPBranding\TaskbarLayout.xml` (+ policy `LayoutXMLPath`); fallback i do Default profilu.
 - **Zástupci na ploše uživatele**: kopie `.lnk` do `C:\Users\Default\Desktop`.
 - **Veřejná plocha**: smazání `C:\Users\Public\Desktop\*.lnk` (když `$ClearPublicDesktop=$true`).
 - **Tapeta/zamykací obrazovka**: obrázky uloženy do `C:\ProgramData\WPBranding`.
@@ -186,7 +186,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 - **Start vlevo**, **lupa jako ikona**, **sloučené ikony oken**, **viditelné přípony**.
 - **Na ploše**: Tento počítač, Složka uživatele, Koš.
 - **Připnutí na panel v pořadí**: Chrome → Firefox → Průzkumník → Outlook → Teams → Výstřižky (**Edge odepnut**).
-- Připnutí na panel **platí pro nově přihlášené uživatele** (zakládá se z Default profilu); na účtu, pod kterým běží instalace, se panel nemění.
+- Připnutí na panel se nasazuje **policy metodou** (`HKLM\…\Explorer\LayoutXMLPath` → `C:\ProgramData\WPBranding\TaskbarLayout.xml`), protože na Win11 24H2/25H2 už metoda přes Default profil nefunguje. Projeví se **po restartu** (na buildu 26200.5722+ i u stávajících uživatelů).
 - „Sloučené ikony oken" = `TaskbarGlomLevel=0`; pro opačné chování (nikdy neslučovat) dej `2`.
 
 ---
@@ -284,7 +284,7 @@ wp-install-script/
 - **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.
 - **Odinstalace cizích AV** — best-effort; McAfee/Norton můžou potřebovat vendor nástroj.
 - **Zástupci na ploše** — Chrome, Firefox, Outlook (classic), Word, Excel, TeamViewer; kopírují se do Default profilu (noví uživatelé) **i na plochu admina** (aby je bylo vidět hned). Smazatelné.
-- **Připnutí na panel** — platí pro nově přihlášené uživatele (Default profil).
+- **Připnutí na panel** — policy přes `LayoutXMLPath` (funguje na 24H2/25H2); projeví se po restartu, na 26200.5722+ i u stávajících uživatelů.
 - **Tapeta a zamykací obrazovka** — přes PersonalizationCSP se nastaví a **zamknou** (uživatel je nezmění).
 - **Pořadí ikon v oznamovací oblasti (u hodin)** — Windows 11 to skriptem spolehlivě nenastaví; řeší se ručním přetažením.
 - **Konzole** — QuickEdit je na začátku vypnut, aby kliknutí do okna nepozastavilo běh.
