@@ -30,6 +30,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - `$SetWallpaper` / `$SetLockScreen` — nastavit tapetu / zamykací obrazovku všem (`$true`).
 - `$WallpaperFallback` / `$LockScreenFallback` — výchozí obrázek, když není v repu.
 - `$SetDefaultApps` — nasadit výchozí aplikace všem novým uživatelům z `config/appassoc.xml`.
+- `$AdminUser` — účet, kterému se nastaví admin práva + heslo bez expirace (samotné heslo ručně).
 
 ---
 
@@ -52,7 +53,8 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 12. **Tiskárna TOSHIBA-recepce** (volitelné; ovladač z GitHub Release).
 13. **Vlastní příkazy** — BitLocker, RDP, NCD, odblokování feature updates, časové pásmo + sync,
     **napájení = nejvyšší výkon** (uspávání ze sítě = Nikdy), **System Restore limit 5 %**, **popisek disku C: = OS**,
-    **zapnutí Defender SmartScreen + blokování PUA**.
+    **Defender SmartScreen + blokování PUA**, **účet admin** (admin práva + heslo bez expirace; heslo ručně),
+    **indexace celého disku C:** (Enhanced) + běžící Windows Search.
 14. **Personalizace** — hlavní panel, Start, plocha (i pro nové uživatele).
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
 16. **Tapeta + zamykací obrazovka** — pro všechny uživatele (PersonalizationCSP).
@@ -128,6 +130,8 @@ Plus **aktualizace aplikací z Microsoft Store**.
   - `Set-MpPreference -PUAProtection Enabled` (blokovat potenciálně nežádoucí aplikace).
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer` → `SmartScreenEnabled = Warn`.
   - `HKLM\SOFTWARE\Policies\Microsoft\Windows\System` → `EnableSmartScreen = 1`, `ShellSmartScreenLevel = Warn`.
+- **Indexace celého disku (Enhanced)** (`HKLM\SOFTWARE\Microsoft\Windows Search`):
+  - `EnableFindMyFiles = 1` (indexovat celý PC; vyžaduje restart služby Windows Search).
 
 ### Pro uživatele (HKCU + Default profil `C:\Users\Default\NTUSER.DAT`)
 
@@ -158,6 +162,8 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 - **Napájení** → aktivní plán **High performance** + power mode **Best performance** (na síti i baterii); **uspávání při napájení ze sítě = Nikdy**.
 - **System Restore** → limit stínové kopie **5 % disku C:** (`vssadmin resize shadowstorage`).
 - **Popisek disku C:** → nastaven na **OS**.
+- **Účet `admin`** → přidán do Administrators, **heslo bez expirace**, účet povolen. Samotné **heslo se nastavuje ručně** (je v poznámce). Když účet neexistuje, zapíše se do poznámky.
+- **Windows Search (WSearch)** → Automatic + restart; **Enhanced indexace** (celý disk C:).
 
 ---
 
@@ -263,6 +269,7 @@ wp-install-script/
 - **Heslo počítače** + **ESET šifrování**.
 - **Kontrola povolení Defenderu**.
 - **Nastavit heslo k účtu admin (Windows)**.
+- **Ověřit indexaci Outlooku** po nastavení e-mailového účtu (indexace mailboxu běží až po vytvoření profilu).
 - **Microsoft 365** – aktivace přihlášením uživatele.
 - **VPN profily** (OpenVPN / Azure VPN) – import ručně.
 
@@ -270,6 +277,8 @@ wp-install-script/
 
 ## Poznámky a upozornění
 
+- **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
+- **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
 - **BitLocker** — vypnutí je záměrné (interní výjimka). Na nešifrovaném disku `manage-bde -off` hlásí chybu (potlačeno); je-li C: opravdu zašifrované, zákaz služby BDESVC může pozastavit dešifrování v půlce.
 - **Oracle Java** — pro komerční/úřední použití formálně vyžaduje licenci Oracle.
 - **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.

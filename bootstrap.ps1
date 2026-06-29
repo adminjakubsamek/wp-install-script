@@ -34,6 +34,7 @@ $SetLockScreen            = $true     # nastavit zamykaci obrazovku vsem uzivate
 $WallpaperFallback        = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
 $LockScreenFallback       = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
 $SetDefaultApps           = $true     # nasadit vychozi aplikace vsem (nove) uzivatelum z config/appassoc.xml
+$AdminUser                = 'admin'   # ucet, kteremu se nastavi admin prava + heslo bez expirace (HESLO rucne)
 # ====================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -168,6 +169,7 @@ if ($PreviewOnly) {
     Write-Host "Tapeta=$SetWallpaper, zamykaci obrazovka=$SetLockScreen (vsem uzivatelum, PersonalizationCSP)"
     Write-Host "Vychozi aplikace pro vsechny (DISM): $SetDefaultApps (config/appassoc.xml)"
     Write-Host "Napajeni: nejvyssi vykon, uspavani ze site=Nikdy; System Restore 5%; popisek C: = OS"
+    Write-Host "Ucet admin: admin prava + heslo bez expirace (heslo rucne); Defender SmartScreen/PUA on; indexace Enhanced"
     Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
     Write-Host "Restart na konci: $Restart"
     Write-Host "=====================================================`n" -ForegroundColor Magenta
@@ -509,6 +511,28 @@ try {
     Write-Host "    [i] Defender: SmartScreen + blokovani PUA zapnuto." -ForegroundColor DarkGray
 } catch { $m = "Defender SmartScreen/PUA: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
+# Ucet "admin": admin prava + heslo BEZ expirace (samotne HESLO se nastavuje rucne - viz poznamka)
+try {
+    if (Get-LocalUser -Name $AdminUser -ErrorAction SilentlyContinue) {
+        Set-LocalUser  -Name $AdminUser -PasswordNeverExpires $true -ErrorAction SilentlyContinue
+        Enable-LocalUser -Name $AdminUser -ErrorAction SilentlyContinue
+        $adminGrp = Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue   # Administrators (locale-safe)
+        if ($adminGrp) { try { Add-LocalGroupMember -Group $adminGrp -Member $AdminUser -ErrorAction Stop } catch {} }
+        Write-Host "    [i] Ucet '$AdminUser': admin prava, heslo bez expirace (heslo nastav rucne)." -ForegroundColor DarkGray
+    } else {
+        $m = "Ucet '$AdminUser' neexistuje - vytvor rucne vcetne hesla"
+        Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
+    }
+} catch { $m = "Ucet '$AdminUser': $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
+# Indexace: Enhanced mode (cely disk C:) + bezici sluzba Windows Search
+try {
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows Search" /v EnableFindMyFiles /t REG_DWORD /d 1 /f *>$null
+    Set-Service  -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
+    Restart-Service -Name WSearch -Force -ErrorAction SilentlyContinue
+    Write-Host "    [i] Indexace: Enhanced (cely PC), sluzba Windows Search bezi." -ForegroundColor DarkGray
+} catch { $m = "Indexace: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+
 # --- 8d) Personalizace: hlavni panel, Start, plocha (aktualni + novi uzivatele) ---
 # HKCU se tyka jen aktualniho uctu; aby nastaveni dostali i nove zalozeni uzivatele,
 # zapisujeme zaroven do Default hive (C:\Users\Default\NTUSER.DAT).
@@ -600,6 +624,7 @@ try {
         '• Heslo počítače + ESET šifrování'
         '• Kontrola povolení Defenderu'
         '• Nastavit heslo k účtu admin (Windows)'
+        '• Ověřit indexaci Outlooku po nastavení e-mailového účtu'
     )
     # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
     $problems = @()
