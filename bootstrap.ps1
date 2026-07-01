@@ -106,12 +106,15 @@ function Get-RepoFileQuiet {
     } catch { return $false }
 }
 
-# --- 3) Detekce jazyka Windows (display language) -> cs/en/de ---
-try   { $tag = (Get-WinUserLanguageList)[0].LanguageTag }   # napr. cs-CZ
+# --- 3) Detekce jazyka Windows (display language) - aplikace se instaluji v jazyce Windows ---
+try   { $tag = (Get-WinUserLanguageList)[0].LanguageTag }   # napr. ro-RO, cs-CZ
 catch { $tag = (Get-Culture).Name }
-$lang = ($tag.Split('-')[0]).ToLower()
-if ($lang -notin @('cs','en','de')) { $lang = 'cs' }        # fallback = cestina
-Write-Host "[*] Jazyk Windows: $tag -> '$lang'" -ForegroundColor Cyan
+if (-not $tag) { $tag = 'en-US' }
+$lang     = ($tag.Split('-')[0]).ToLower()   # dvoupismenne: ro, cs, en, de...
+$offLang  = $tag.ToLower()                    # Office kod: ro-ro, cs-cz, en-us, de-de...
+$ffLang   = if ($lang -eq 'en') { 'en-US' } else { $lang }                              # Mozilla locale
+$dopdfLang = if ($lang -in @('cs','en','de','fr','it','es','nl','pl','pt','ru','tr','sk','hu')) { $lang } else { 'en' }
+Write-Host "[*] Jazyk Windows: $tag (aplikace v tomto jazyce; Office=$offLang)" -ForegroundColor Cyan
 
 # --- 3b) Prejmenovani pocitace dle serioveho cisla (BIOS) ---
 if ($RenameToSerial) {
@@ -157,7 +160,7 @@ $apps = @(
     @{ Id = 'VideoLAN.VLC' }                                   # multijazycny, dle OS  (+ vlc.reg)
     @{ Id = 'Adobe.Acrobat.Reader.64-bit' }                    # MUI dle OS  (OVERIT na 1. stroji)
     @{ Id = 'PDFsam.PDFsam' }                                  # (+ pdfsam.reg, pdfsam.l4j.ini)
-    @{ Id = 'Softland.doPDF.11'; Custom = "-install_language=$lang" }   # OVERIT, ze winget arg prijme
+    @{ Id = 'Softland.doPDF.11'; Custom = "-install_language=$dopdfLang" }
     @{ Id = 'Oracle.JavaRuntimeEnvironment' }                  # Oracle Java 8 (klasicka java.com); komercne licence!
     @{ Id = 'OpenVPNTechnologies.OpenVPN' }                    # OpenVPN Community klient (profily rucne)
     @{ Id = 'TeamViewer.TeamViewer' }                          # plny klient; obcas 'hash mismatch' (OVERIT)
@@ -168,7 +171,7 @@ $apps = @(
 # --- 5b) Nahled bez instalace ---
 if ($PreviewOnly) {
     Write-Host "`n===== NAHLED (PreviewOnly) - nic se neinstaluje =====" -ForegroundColor Magenta
-    Write-Host "Jazyk: $tag -> '$lang'"
+    Write-Host "Jazyk Windows: $tag (aplikace v tomto jazyce; Office=$offLang)"
     Write-Host "`nAplikace (winget):"
     foreach ($a in $apps) {
         $sc = if ($a.ContainsKey('Scope')) { $a.Scope } else { 'machine' }
@@ -298,8 +301,6 @@ try {
 
 # --- 5d) Firefox - lokalizovany build primo od Mozilly (dle jazyka Windows) ---
 try {
-    $ffLangMap = @{ cs = 'cs'; en = 'en-US'; de = 'de' }
-    $ffLang = $ffLangMap[$lang]
     $ffUri  = "https://download.mozilla.org/?product=firefox-latest-ssl&os=win64&lang=$ffLang"
     $ffExe  = Join-Path $work 'firefox-setup.exe'
     Write-Host "[>] Firefox ($ffLang) primo od Mozilly..." -ForegroundColor Yellow
@@ -315,9 +316,7 @@ try {
 $odtDir = Join-Path $env:ProgramFiles 'OfficeDeploymentTool'
 try {
     Write-Host "[*] Microsoft 365 Apps for business (ODT)..." -ForegroundColor Cyan
-    # configuration.xml se generuje s JEDNIM jazykem dle Windows (MatchOS by nabral vic jazyku)
-    $offLangMap = @{ cs = 'cs-cz'; en = 'en-us'; de = 'de-de' }
-    $offLang = $offLangMap[$lang]
+    # configuration.xml s JEDNIM jazykem dle Windows ($offLang z detekce, napr. ro-ro)
     $offXml = @"
 <Configuration ID="vsenory-m365-business">
   <Add OfficeClientEdition="64" Channel="Current">
@@ -726,18 +725,52 @@ try {
     Set-ItemProperty -Path $sysPol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
 } catch { $m = "Tapeta/zamykaci obrazovka: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
-# --- 8h) Vychozi aplikace pro vsechny (nove) uzivatele - DISM import ---
+# --- 8h) Vychozi aplikace (Chrome=prohlizec/pdf?/mailto, VLC=avi/mp3/mp4, Adobe=pdf) ---
 if ($SetDefaultApps) {
-    if (Get-RepoFileQuiet -Path 'config/appassoc.xml' -OutFile "$work\appassoc.xml") {
-        & dism.exe /Online /Import-DefaultAppAssociations:"$work\appassoc.xml" *>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [i] Vychozi aplikace nasazeny (plati pro nove uzivatele)." -ForegroundColor DarkGray
-        } else {
-            $m = "Vychozi aplikace: DISM import skoncil s kodem $LASTEXITCODE"
-            Write-Warning "    $m"; $script:Issues += $m
+    function Get-CapProgId { param($CapRel,$Type,$Name)
+        foreach ($root in 'HKLM:\SOFTWARE','HKLM:\SOFTWARE\WOW6432Node') {
+            $k = Join-Path (Join-Path $root $CapRel) $Type
+            if (Test-Path $k) {
+                $it = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                if ($it -and $it.PSObject.Properties[$Name]) { return $it.$Name }
+            }
         }
+        return $null
+    }
+    # ProgID bereme primo z registru (co appky zaregistrovaly) - nezavisle na verzi/jazyku
+    $want = @()
+    $cCap = 'Clients\StartMenuInternet\Google Chrome\Capabilities'
+    foreach ($u in 'http','https') { $pg = Get-CapProgId $cCap 'URLAssociations'  $u; if ($pg) { $want += @{ Id=$u; ProgId=$pg; App='Google Chrome' } } }
+    foreach ($e in '.htm','.html')  { $pg = Get-CapProgId $cCap 'FileAssociations' $e; if ($pg) { $want += @{ Id=$e; ProgId=$pg; App='Google Chrome' } } }
+    $vCap = 'VideoLAN\VLC\Capabilities'
+    foreach ($e in '.avi','.mp3','.mp4') { $pg = Get-CapProgId $vCap 'FileAssociations' $e; if ($pg) { $want += @{ Id=$e; ProgId=$pg; App='VLC media player' } } }
+    $ol = Get-CapProgId 'Clients\Mail\Microsoft Outlook\Capabilities' 'URLAssociations' 'mailto'
+    if ($ol) { $want += @{ Id='mailto'; ProgId=$ol; App='Outlook' } }
+    $pdf = $null
+    $pdfKey = 'HKLM:\SOFTWARE\Classes\.pdf\OpenWithProgids'
+    if (Test-Path $pdfKey) { $pdf = (Get-Item $pdfKey).Property | Where-Object { $_ -like '*Acro*' -or $_ -like '*Adobe*' } | Select-Object -First 1 }
+    if (-not $pdf) { $pdf = 'AcroExch.Document.DC' }
+    $want += @{ Id='.pdf'; ProgId=$pdf; App='Adobe Acrobat Reader' }
+
+    # 1) NOVI uzivatele: appassoc.xml + DISM (repo verze ma prednost, pokud existuje)
+    $xmlPath = "$work\appassoc.xml"
+    if (-not (Get-RepoFileQuiet -Path 'config/appassoc.xml' -OutFile $xmlPath)) {
+        $sb = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<DefaultAssociations>`r`n"
+        foreach ($w in $want) { $sb += "  <Association Identifier=`"$($w.Id)`" ProgId=`"$($w.ProgId)`" ApplicationName=`"$($w.App)`" />`r`n" }
+        $sb += "</DefaultAssociations>`r`n"
+        [System.IO.File]::WriteAllText($xmlPath, $sb, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    & dism.exe /Online /Import-DefaultAppAssociations:"$xmlPath" *>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "    [i] Vychozi aplikace pro NOVE uzivatele nasazeny (DISM)." -ForegroundColor DarkGray }
+    else { $m = "Vychozi aplikace (DISM) kod $LASTEXITCODE"; Write-Warning "    $m"; $script:Issues += $m }
+
+    # 2) AKTUALNI uzivatel: Win11 chrani per-user defaults hashem -> potreba SetUserFTA.exe (v repu)
+    $fta = "$work\SetUserFTA.exe"
+    if (Get-RepoFileQuiet -Path 'SetUserFTA.exe' -OutFile $fta) {
+        foreach ($w in $want) { & $fta $w.Id $w.ProgId *>$null }
+        Write-Host "    [i] Vychozi aplikace nastaveny i AKTUALNIMU uzivateli (SetUserFTA)." -ForegroundColor DarkGray
     } else {
-        $m = "Vychozi aplikace: config/appassoc.xml zatim neni v repu (preskoceno - vygeneruj DISM exportem)"
+        $m = "Vychozi aplikace pro aktualni ucet: chybi SetUserFTA.exe v repu (bez nej plati jen pro nove uzivatele)"
         Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
     }
 }

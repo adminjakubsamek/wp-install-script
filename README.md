@@ -29,7 +29,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - `$ClearPublicDesktop` — smazat zástupce z veřejné plochy (`$true`).
 - `$SetWallpaper` / `$SetLockScreen` — nastavit tapetu / zamykací obrazovku všem (`$true`).
 - `$WallpaperFallback` / `$LockScreenFallback` — výchozí obrázek, když není v repu.
-- `$SetDefaultApps` — nasadit výchozí aplikace všem novým uživatelům z `config/appassoc.xml`.
+- `$SetDefaultApps` — nastavit výchozí aplikace (Chrome, VLC, Adobe, Outlook) novým uživatelům (DISM) i aktuálnímu (SetUserFTA).
 - `$AdminUser` — účet, kterému se nastaví admin práva + heslo bez expirace (samotné heslo ručně).
 
 ---
@@ -58,7 +58,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 14. **Personalizace** — hlavní panel, Start, plocha (i pro nové uživatele).
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
 16. **Tapeta + zamykací obrazovka** — pro všechny uživatele (PersonalizationCSP).
-16b. **Výchozí aplikace pro všechny** — DISM import `config/appassoc.xml` (prohlížeč, .pdf, mailto, 7-Zip…).
+16b. **Výchozí aplikace** — ProgID se čtou z registru; noví uživatelé přes DISM, aktuální uživatel přes `SetUserFTA.exe` (je-li v repu). Chrome=http/https/.htm/.html, Adobe=.pdf, Outlook=mailto, VLC=.avi/.mp3/.mp4.
 17. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu).
 18. **Úklid dočasných souborů**, výpis shrnutí, **restart**.
 
@@ -89,14 +89,17 @@ Plus **aktualizace aplikací z Microsoft Store**.
 
 ---
 
-## Jazyk aplikací (dle jazyka Windows)
+## Jazyk aplikací (řídí se jazykem Windows)
+
+Jazyk se **odvozuje přímo z jazyka Windows** (display language). Pro rumunský systém (`ro-RO`)
+se nainstaluje vše v rumunštině, pro český (`cs-CZ`) v češtině atd. Žádný napevno nastavený fallback na češtinu.
 
 | Aplikace | Jak se řídí jazyk |
 |---|---|
 | 7-Zip, VLC, Chrome, Adobe Reader | automaticky dle jazyka OS |
-| Firefox | lokalizovaný build od Mozilly (`cs` / `en-US` / `de`) |
-| doPDF | parametr instalátoru `-install_language` |
-| Microsoft 365 | jeden jazyk v ODT configu (`cs-cz` / `en-us` / `de-de`) |
+| Firefox | lokalizovaný build od Mozilly (`$ffLang` = dvoupísmenný kód OS, `en`→`en-US`) |
+| doPDF | `-install_language` = kód OS, u nepodporovaného jazyka fallback `en` |
+| Microsoft 365 | jeden jazyk v ODT (`$offLang` = plný kód OS, např. `ro-ro`, `cs-cz`) |
 | Java, OpenVPN, TeamViewer, Azure VPN | bez jazykového UI / nerelevantní |
 
 ---
@@ -202,19 +205,20 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 
 ## Výchozí aplikace a asociace souborů (vč. 7-Zip)
 
-Výchozí aplikace pro všechny **nově založené** uživatele se nasazují přes DISM z jednoho souboru
-`config/appassoc.xml` (prohlížeč Chrome pro http/https/.htm/.html/.mhtml, .pdf → Adobe, mailto → Outlook,
-archivy → 7-Zip atd.). Soubor vznikne z referenčního stroje, kde máš vše nastavené tak, jak chceš:
+Skript nastavuje tyto výchozí aplikace: **Chrome** pro http/https/.htm/.html, **Adobe** pro .pdf,
+**Outlook** pro mailto, **VLC** pro .avi/.mp3/.mp4. **ProgID se čtou přímo z registru** (z `Capabilities`
+nainstalovaných aplikací), takže nezávisí na verzi ani jazyku a **není potřeba nic exportovat**.
 
-1. Na referenčním PC nastav výchozí aplikace + asociace 7-Zip (přesně jak chceš).
-2. Spusť v PowerShellu jako správce:
-   ```powershell
-   dism /online /export-defaultappassociations:"$env:USERPROFILE\Desktop\appassoc.xml"
-   ```
-3. Vzniklý `appassoc.xml` nahraj do repa jako `config/appassoc.xml`.
+Nasazení probíhá dvěma cestami, protože Windows 11 chrání výchozí aplikace per-uživatel hashem:
 
-Skript ho pak na každém stroji naimportuje (`dism /online /import-defaultappassociations`).
-Pozn.: import platí pro **nové uživatele** (ne pro účet, pod kterým běží instalace).
+- **Noví uživatelé** — vygeneruje se `appassoc.xml` a naimportuje přes `dism /online /import-defaultappassociations`.
+  (Má-li repo `config/appassoc.xml`, použije se místo vygenerovaného — tvůj vlastní export má přednost.)
+- **Aktuální uživatel** (účet, pod kterým skript běží = koncový uživatel) — nastaví se přes **`SetUserFTA.exe`**,
+  který umí zapsat chráněný per-user hash. Aby to fungovalo, přidej do **kořene repa** `SetUserFTA.exe`
+  (zdarma, https://kolbi.cz/SetUserFTA/). Bez něj se výchozí aplikace nastaví jen novým uživatelům.
+
+> Proč to dřív nefungovalo: DISM import platí **jen pro nové uživatele**, ne pro účet, pod kterým instaluješ.
+> Když skript spouští přímo koncový uživatel (např. `catalin.barbu`), musí se použít SetUserFTA.
 
 ---
 
@@ -233,6 +237,7 @@ wp-install-script/
 ├─ README.md
 ├─ tisk-recepce.ps1       # instalace tiskárny (volá ho bootstrap)
 ├─ SetACL.exe             # práva tiskárny
+├─ SetUserFTA.exe         # výchozí aplikace pro aktuálního uživatele (volitelné, doporučené)
 ├─ tweaks/
 │  ├─ win10.ps1           # runner
 │  ├─ win10.psm1          # modul tweaků
@@ -241,7 +246,7 @@ wp-install-script/
    ├─ pdfsam.reg
    ├─ pdfsam.l4j.ini
    ├─ vlc.reg
-   ├─ appassoc.xml        # vychozi aplikace (DISM) - vygeneruj z ref. stroje
+   ├─ appassoc.xml        # volitelné - vlastní export; jinak si skript vygeneruje sám
    └─ branding/           # volitelné
       ├─ wallpaper.jpg
       └─ lockscreen.jpg
