@@ -301,14 +301,26 @@ foreach ($a in $apps) {
     if ($a.ContainsKey('Custom')) { $wgArgs += @('--custom', $a.Custom) }
 
     Write-Host "[>] $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
-    & $winget @wgArgs
     # winget install sam upgraduje (kdyz je novejsi) nebo neudela nic (kdyz je aktualni) - NEreinstaluje.
-    switch ($LASTEXITCODE) {
+    # Retry: kdyz jina instalace drzi Windows Installer (chyba 1618), pockame a zkusime znovu.
+    $okCodes = @(0, -1978335189, -1978335135, -1978334963)
+    $code = $null
+    for ($try = 1; $try -le 4; $try++) {
+        & $winget @wgArgs
+        $code = $LASTEXITCODE
+        if ($okCodes -contains $code) { break }
+        if ($try -lt 4) {
+            Write-Host "    [~] Instalace se nezdarila (kod $code) - mozna bezi jina instalace / Windows Update. Cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 30
+            continue
+        }
+    }
+    switch ($code) {
         0           { Write-Host "    [i] nainstalovano / zaktualizovano." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335189 { Write-Host "    [i] uz je aktualni - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335135 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978334963 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
-        default     { Write-Warning "    $($a.Id) skoncil s kodem $LASTEXITCODE"; $failed += "$($a.Id) (kod $LASTEXITCODE)" }
+        default     { Write-Warning "    $($a.Id) skoncil s kodem $code (i po opakovani)"; $failed += "$($a.Id) (kod $code)" }
     }
 }
 

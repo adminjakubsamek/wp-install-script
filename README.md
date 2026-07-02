@@ -311,6 +311,9 @@ wp-install-script/
 
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
+- **Chyba 1618 „another installation in progress"** — Windows dovolí jen jednu MSI instalaci naráz.
+  Když během běhu instaluje něco na pozadí (Windows Update, aktualizace Store aplikací), MSI aplikace
+  by jinak spadly. Instalační smyčka proto při neúspěchu **3× zopakuje pokus s pauzou 30 s**.
 - **Opakované spuštění (idempotence)** — skript lze pustit znovu bez reinstalace:
   aplikace přes winget se jen aktualizují (nebo přeskočí, když jsou aktuální), **M365 se neodstraňuje**
   (jen zaktualizuje), Firefox se přeskočí, pokud je nainstalovaný, a tiskárna se přeskočí, pokud existuje.
