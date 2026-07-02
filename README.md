@@ -229,12 +229,39 @@ Nasazení probíhá dvěma cestami, protože Windows 11 chrání výchozí aplik
 
 ---
 
+## Zdroj souborů / hosting (`$BaseUrl`)
+
+Skript nestahuje z pevně zadaného GitHubu — vše jde přes proměnnou **`$BaseUrl`** (+ volitelný **`$Sas`**)
+nahoře v `bootstrap.ps1`. Díky tomu je zdroj vyměnitelný bez zásahu do logiky.
+
+| Hosting | `$BaseUrl` | Přihlášení |
+|---|---|---|
+| GitHub raw (testovací) | `https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main` | ne (veřejné) |
+| Azure Storage **static website** (`$web`) | `https://<ucet>.z13.web.core.windows.net` | ne (veřejné by design) |
+| Azure Blob s anonymním čtením | `https://<ucet>.blob.core.windows.net/<kontejner>` | ne (nutno zapnout public access) |
+| Azure Blob privátní + SAS | `https://<ucet>.blob.core.windows.net/<kontejner>` + `$Sas='?sv=...&sig=...'` | ne (token v URL, expiruje) |
+
+**Spuštění** = `irm "$BaseUrl/bootstrap.ps1$Sas" | iex` (jeden řádek, elevovaný PowerShell).
+
+### Migrace GitHub → Azure DevOps
+1. **Repo:** DevOps → *Repos → Import a repository* → vlož veřejnou GitHub URL (bez auth).
+2. **`ToshibaDRV.zip`** (byl GitHub Release asset) se **nemigruje** — nahraj ho ručně do Storage (do `$web`).
+3. **Storage:** vytvoř účet → zapni *Static website* → soubory publikuje pipeline `azure-pipelines.yml`
+   (DevOps repo = privátní zdroj, Storage `$web` = veřejné doručování bez přihlašování).
+4. V `bootstrap.ps1` přepni `$BaseUrl` na endpoint static website.
+
+> **Proč ne přímo z DevOps:** REST API DevOps na stažení souboru vyžaduje PAT token — anonymní „raw" jako
+> `raw.githubusercontent.com` DevOps nenabízí. Proto se pro doručování používá Storage.
+
+---
+
 ## Struktura repa
 
 ```
 wp-install-script/
 ├─ bootstrap.ps1          # hlavní skript
 ├─ README.md
+├─ azure-pipelines.yml    # publikace do Azure Storage (DevOps -> $web)
 ├─ tisk-recepce.ps1       # instalace tiskárny (volá ho bootstrap)
 ├─ SetACL.exe             # práva tiskárny
 ├─ SetUserFTA.exe         # výchozí aplikace pro aktuálního uživatele (volitelné, doporučené)
@@ -284,6 +311,10 @@ wp-install-script/
 
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
+- **Opakované spuštění (idempotence)** — skript lze pustit znovu bez reinstalace:
+  aplikace přes winget se jen aktualizují (nebo přeskočí, když jsou aktuální), **M365 se neodstraňuje**
+  (jen zaktualizuje), Firefox se přeskočí, pokud je nainstalovaný, a tiskárna se přeskočí, pokud existuje.
+  Registry/služby/personalizace se přepisují (je to neškodné).
 - **BitLocker** — vypnutí je záměrné (interní výjimka). Na nešifrovaném disku `manage-bde -off` hlásí chybu (potlačeno); je-li C: opravdu zašifrované, zákaz služby BDESVC může pozastavit dešifrování v půlce.
 - **Oracle Java** — pro komerční/úřední použití formálně vyžaduje licenci Oracle.
 - **TeamViewer** — winget balíček občas hlásí „hash mismatch"; pak stačí spustit znovu.

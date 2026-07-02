@@ -6,17 +6,21 @@
     Nezavisi na NASce ani na jednotce Q: - vse se tahne z verejneho GitHub repa
     a z webu vyrobcu (nejnovejsi verze) pres winget.
 
-    Priklad spusteni (jeden radek, elevovany PowerShell):
-      irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex
+    Priklad spusteni (jeden radek, elevovany PowerShell) - URL = $BaseUrl/bootstrap.ps1 (+ pripadne $Sas):
+      irm "https://<ucet>.z13.web.core.windows.net/bootstrap.ps1" | iex
+    (Docasne z GitHubu: irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bootstrap.ps1" | iex)
 
     Log z kazdeho behu: na plochu admina (install_<datum>_<cas>.log)
     Nahled bez instalace: nahore prepni $PreviewOnly = $true (jen vypise plan a skonci).
 #>
 
 # ============================ KONFIGURACE ============================
-$Owner       = 'adminjakubsamek'      # GitHub ucet
-$Repo        = 'wp-install-script'    # nazev repa
-$Ref         = 'main'                 # vetev nebo tag
+# Zdroj vsech souboru (bootstrap.ps1 + tweaks/ + config/ + *.exe + ToshibaDRV.zip). BEZ prihlasovani.
+#   - Azure Storage static website:  https://<ucet>.z13.web.core.windows.net
+#   - nebo blob kontejner:           https://<ucet>.blob.core.windows.net/<kontejner>
+#   - GitHub raw (docasne/testovaci): https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main
+$BaseUrl     = 'https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main'
+$Sas         = ''   # volitelny read-only SAS vcetne '?', napr. '?sv=...&sig=...'; prazdne = anonymni/verejne
 $Restart     = $true                  # na konci restartovat
 $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
 # Log se uklada na plochu admina (viz 0b) - zadny zapis do C:\ProgramData
@@ -33,7 +37,7 @@ $SetLockScreen            = $true     # nastavit zamykaci obrazovku vsem uzivate
 # kdyz tam nejsou, pouzije vychozi Win11 img0.jpg.
 $WallpaperFallback        = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
 $LockScreenFallback       = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
-$SetDefaultApps           = $true     # nasadit vychozi aplikace vsem (nove) uzivatelum z config/appassoc.xml
+$SetDefaultApps           = $true     # nastavit vychozi aplikace (Chrome/VLC/Adobe/Outlook); ProgID z registru, novi=DISM + aktualni=SetUserFTA
 $AdminUser                = 'admin'   # ucet, kteremu se nastavi admin prava + heslo bez expirace (HESLO rucne)
 # ====================================================================
 
@@ -79,7 +83,7 @@ Write-Host "[*] Pracovni slozka: $work" -ForegroundColor Cyan
 # --- 2) Pomocna funkce: stahni soubor z verejneho repa (raw.githubusercontent.com) ---
 function Get-RepoFile {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
-    $uri = "https://raw.githubusercontent.com/$Owner/$Repo/$Ref/$Path"
+    $uri = "$BaseUrl/$Path$Sas"
     $dir = Split-Path $OutFile -Parent
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     Invoke-WebRequest -Uri $uri -OutFile $OutFile -UseBasicParsing
@@ -89,7 +93,7 @@ function Get-RepoFile {
 function Get-RepoFileQuiet {
     # stahne soubor z repa; pri 404 NEhazi chybu (zadny sum v logu), vraci $true/$false
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
-    $uri = "https://raw.githubusercontent.com/$Owner/$Repo/$Ref/$Path"
+    $uri = "$BaseUrl/$Path$Sas"
     try {
         Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
         $hc = New-Object System.Net.Http.HttpClient
@@ -180,7 +184,7 @@ if ($PreviewOnly) {
     }
     Write-Host "`nStore: vynuti aktualizaci aplikaci z Microsoft Store"
     Write-Host "Firefox: lokalizovany build primo od Mozilly (lang dle Windows)"
-    Write-Host "Microsoft 365 Apps for business: ODT, jazyk=MatchOS, aktivace rucne"
+    Write-Host "Microsoft 365 Apps for business: ODT, jazyk dle Windows ($offLang), aktivace rucne"
     Write-Host "`nTweaky: tweaks/win10.ps1 + win10.psm1 + install.preset"
     Write-Host "Konfigy: config/pdfsam.reg, config/vlc.reg, config/pdfsam.l4j.ini, Adobe upsell off"
     Write-Host "Tiskarna TOSHIBA-recepce: $InstallPrinter"
@@ -190,7 +194,7 @@ if ($PreviewOnly) {
     Write-Host "Predinstalacni uklid: OEM Office=$RemovePreinstalledOffice, cizi AV=$RemoveThirdPartyAV"
     Write-Host "Plocha uzivatele (smazatelne): $($UserDesktopShortcuts -join ', '); vycistit verejnou=$ClearPublicDesktop"
     Write-Host "Tapeta=$SetWallpaper, zamykaci obrazovka=$SetLockScreen (vsem uzivatelum, PersonalizationCSP)"
-    Write-Host "Vychozi aplikace pro vsechny (DISM): $SetDefaultApps (config/appassoc.xml)"
+    Write-Host "Vychozi aplikace: $SetDefaultApps (Chrome/VLC/Adobe/Outlook; DISM novi + SetUserFTA aktualni)"
     Write-Host "Napajeni: nejvyssi vykon, uspavani ze site=Nikdy; System Restore 5%; popisek C: = OS"
     Write-Host "Ucet admin: admin prava + heslo bez expirace (heslo rucne); Defender SmartScreen/PUA on; indexace Enhanced"
     Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
@@ -204,8 +208,17 @@ if ($PreviewOnly) {
 Write-Host "[*] Predinstalacni uklid (OEM Office / OneNote / cizi AV)..." -ForegroundColor Cyan
 function Get-Prop { param($obj,$name) if ($obj.PSObject.Properties[$name]) { $obj.PSObject.Properties[$name].Value } else { $null } }
 
-# 1) Vsechny preinstalovane Office Click-to-Run produkty + jazykove mutace -> ODT Remove All
-if ($RemovePreinstalledOffice) {
+# 1) Office: nas M365 (O365BusinessRetail) ponechat a jen zaktualizovat; cizi/OEM Office odstranit
+$script:officeHave = $false; $script:officeIsOurs = $false
+try {
+    $c2r = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
+    if ($c2r -and $c2r.PSObject.Properties['ProductReleaseIds']) {
+        $script:officeHave = $true
+        if ($c2r.ProductReleaseIds -match 'O365BusinessRetail') { $script:officeIsOurs = $true }
+    }
+} catch {}
+
+if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIsOurs) {
     try {
         & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --accept-package-agreements --accept-source-agreements 2>$null
         $odtSetup = Join-Path $env:ProgramFiles 'OfficeDeploymentTool\setup.exe'
@@ -218,13 +231,20 @@ if ($RemovePreinstalledOffice) {
 </Configuration>
 "@
             Set-Content -Path "$work\office-remove.xml" -Value $rmXml -Encoding UTF8
-            Write-Host "    [>] Odinstalace vsech Office C2R produktu (ODT Remove All)..." -ForegroundColor DarkGray
+            Write-Host "    [>] Odinstalace cizich Office C2R produktu (ODT Remove All)..." -ForegroundColor DarkGray
             Start-Process -FilePath $odtSetup -ArgumentList "/configure `"$work\office-remove.xml`"" -Wait -NoNewWindow
-            Write-Host "    [i] OEM Office C2R odebran." -ForegroundColor DarkGray
+            Write-Host "    [i] Cizi/OEM Office C2R odebran." -ForegroundColor DarkGray
+            $script:officeHave = $false
         }
     } catch { $m = "OEM Office: ODT Remove All selhal ($($_.Exception.Message))"; Write-Warning "    $m"; $script:Issues += $m }
+} elseif ($script:officeIsOurs) {
+    Write-Host "    [i] M365 (O365BusinessRetail) uz je nainstalovan - neodstranuji (jen se zaktualizuje)." -ForegroundColor DarkGray
+} else {
+    Write-Host "    [i] Zadny cizi Office k odebrani." -ForegroundColor DarkGray
+}
 
-    # Store/UWP Office stuby + OneNote (vsem uzivatelum + provisioned, aby se nevracely)
+# Store/UWP Office stuby + OneNote (vsem uzivatelum + provisioned) - idempotentni, vzdy
+if ($RemovePreinstalledOffice) {
     foreach ($pat in 'Microsoft.MicrosoftOfficeHub','Microsoft.Office.OneNote','Microsoft.OneNote') {
         try { Get-AppxPackage -AllUsers -Name $pat -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue } catch {}
         try {
@@ -280,14 +300,15 @@ foreach ($a in $apps) {
     if ($scope -ne 'none') { $wgArgs += @('--scope', $scope) }
     if ($a.ContainsKey('Custom')) { $wgArgs += @('--custom', $a.Custom) }
 
-    Write-Host "[>] Instaluji $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
+    Write-Host "[>] $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
     & $winget @wgArgs
-    # winget: 0 = OK, -1978335189 = no upgrade, -1978334963 = uz nainstalovano (MSIX). Vse bereme jako OK.
-    if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189 -or $LASTEXITCODE -eq -1978334963) {
-        $ok += $a.Id
-    } else {
-        Write-Warning "    $($a.Id) skoncil s kodem $LASTEXITCODE"
-        $failed += "$($a.Id) (kod $LASTEXITCODE)"
+    # winget install sam upgraduje (kdyz je novejsi) nebo neudela nic (kdyz je aktualni) - NEreinstaluje.
+    switch ($LASTEXITCODE) {
+        0           { Write-Host "    [i] nainstalovano / zaktualizovano." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978335189 { Write-Host "    [i] uz je aktualni - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978335135 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978334963 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
+        default     { Write-Warning "    $($a.Id) skoncil s kodem $LASTEXITCODE"; $failed += "$($a.Id) (kod $LASTEXITCODE)" }
     }
 }
 
@@ -299,23 +320,30 @@ try {
     Write-Host "    [i] Store aktualizace spustena (probiha na pozadi)." -ForegroundColor DarkGray
 } catch { Write-Warning "    Store aktualizace: $($_.Exception.Message)" }
 
-# --- 5d) Firefox - lokalizovany build primo od Mozilly (dle jazyka Windows) ---
-try {
-    $ffUri  = "https://download.mozilla.org/?product=firefox-latest-ssl&os=win64&lang=$ffLang"
-    $ffExe  = Join-Path $work 'firefox-setup.exe'
-    Write-Host "[>] Firefox ($ffLang) primo od Mozilly..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri $ffUri -OutFile $ffExe -UseBasicParsing
-    Start-Process -FilePath $ffExe -ArgumentList '-ms' -Wait
-    $ok += "Firefox ($ffLang)"
-} catch {
-    Write-Warning "    Firefox: $($_.Exception.Message)"
-    $failed += "Firefox ($($_.Exception.Message))"
+# --- 5d) Firefox - lokalizovany build primo od Mozilly (jen kdyz jeste neni; sam se aktualizuje) ---
+$ffInstalled = (Test-Path 'C:\Program Files\Mozilla Firefox\firefox.exe') -or (Test-Path 'C:\Program Files (x86)\Mozilla Firefox\firefox.exe')
+if ($ffInstalled) {
+    Write-Host "[>] Firefox uz je nainstalovan - preskoceno (aktualizuje se sam)." -ForegroundColor DarkGray
+    $ok += 'Firefox (uz nainstalovan)'
+} else {
+    try {
+        $ffUri  = "https://download.mozilla.org/?product=firefox-latest-ssl&os=win64&lang=$ffLang"
+        $ffExe  = Join-Path $work 'firefox-setup.exe'
+        Write-Host "[>] Firefox ($ffLang) primo od Mozilly..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $ffUri -OutFile $ffExe -UseBasicParsing
+        Start-Process -FilePath $ffExe -ArgumentList '-ms' -Wait
+        $ok += "Firefox ($ffLang)"
+    } catch {
+        Write-Warning "    Firefox: $($_.Exception.Message)"
+        $failed += "Firefox ($($_.Exception.Message))"
+    }
 }
 
-# --- 6) Microsoft 365 Apps for business (ODT z webu pres winget, jazyk = MatchOS) ---
+# --- 6) Microsoft 365 Apps for business (ODT z webu pres winget, jazyk dle Windows = $offLang) ---
 $odtDir = Join-Path $env:ProgramFiles 'OfficeDeploymentTool'
 try {
     Write-Host "[*] Microsoft 365 Apps for business (ODT)..." -ForegroundColor Cyan
+    if ($script:officeIsOurs) { Write-Host "    [i] M365 uz je nainstalovan -> jen kontrola aktualizaci (bez reinstalace)." -ForegroundColor DarkGray }
     # configuration.xml s JEDNIM jazykem dle Windows ($offLang z detekce, napr. ro-ro)
     $offXml = @"
 <Configuration ID="vsenory-m365-business">
@@ -410,10 +438,14 @@ try {
 
 # --- 8b) Tiskarna TOSHIBA-recepce (volitelne, site-specific - jen na pobocce) ---
 if ($InstallPrinter) {
+  if (Get-Printer -Name 'TOSHIBA-recepce' -ErrorAction SilentlyContinue) {
+    Write-Host "[*] Tiskarna TOSHIBA-recepce uz existuje - preskoceno." -ForegroundColor DarkGray
+    $ok += 'TOSHIBA-recepce (uz existuje)'
+  } else {
     Write-Host "[*] Instalace tiskarny TOSHIBA-recepce..." -ForegroundColor Cyan
     try {
-        # ovladac (velky) z GitHub Release assetu (releases/latest), zbytek z korene repa
-        $relUrl = "https://github.com/$Owner/$Repo/releases/latest/download/ToshibaDRV.zip"
+        # ovladac (velky) ze stejneho zdroje jako zbytek (BaseUrl); nahraj ToshibaDRV.zip do koren zdroje
+        $relUrl = "$BaseUrl/ToshibaDRV.zip$Sas"
         Invoke-WebRequest -Uri $relUrl -OutFile "$work\ToshibaDRV.zip" -UseBasicParsing
         Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
         Get-RepoFile -Path 'tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
@@ -432,6 +464,7 @@ if ($InstallPrinter) {
         Write-Warning "    Tiskarna preskocena: $($_.Exception.Message)"
         $failed += "Tiskarna ($($_.Exception.Message))"
     }
+  }
 }
 
 # --- 8c) Vlastni prikazy (uprav/doplnuj dle potreby) ---
@@ -596,7 +629,7 @@ try {
     }
     $ff = Find-Lnk @('Firefox.lnk','Mozilla Firefox.lnk')
     $gc = Find-Lnk @('Google Chrome.lnk','Chrome.lnk')
-    $ol = Find-Lnk @('Outlook.lnk','Outlook (classic).lnk','Microsoft Outlook.lnk')
+    $ol = Find-Lnk @('Outlook (classic).lnk','Microsoft Outlook.lnk','Outlook.lnk')   # classic ma prednost pred 'novym' Outlookem
 
     $pins = ''
     if ($gc) { $pins += "        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$gc`" />`r`n" }
@@ -677,7 +710,8 @@ try {
     if (-not (Test-Path $defDesk)) { New-Item -ItemType Directory -Path $defDesk -Force | Out-Null }
     $startRoot = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
     foreach ($name in $UserDesktopShortcuts) {
-        $lnk = Get-ChildItem -Path $startRoot -Recurse -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        $lnk = Get-ChildItem -Path $startRoot -Recurse -Filter $name -ErrorAction SilentlyContinue |
+               Sort-Object @{ Expression = { if ($_.Name -like '*classic*') { 0 } else { 1 } } }, Name | Select-Object -First 1
         if ($lnk) {
             Copy-Item $lnk.FullName -Destination $defDesk      -Force -ErrorAction SilentlyContinue   # novi uzivatele
             Copy-Item $lnk.FullName -Destination $adminDesktop -Force -ErrorAction SilentlyContinue   # aby je videl i admin
