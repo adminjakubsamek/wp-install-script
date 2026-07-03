@@ -614,7 +614,10 @@ try {
         & reg add $adv /v TaskbarGlomLevel   /t REG_DWORD /d 0 /f *>$null   # vzdy slucovat (vypnout "roztahovani" oken)
         & reg add $adv /v MMTaskbarGlomLevel /t REG_DWORD /d 0 /f *>$null   # totez na sekundarnich monitorech
         & reg add $adv /v HideFileExt        /t REG_DWORD /d 0 /f *>$null   # zobrazit pripony souboru
-        & reg add "$r\Software\Microsoft\Windows\CurrentVersion\Search" /v SearchboxTaskbarMode /t REG_DWORD /d 1 /f *>$null  # hledani = jen ikona (lupa)
+        & reg add "$r\Software\Microsoft\Windows\CurrentVersion\Search" /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f *>$null  # Hledat = Skryt
+        & reg add $adv /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f *>$null   # totez i ve starsim umisteni
+        & reg add $adv /v ShowTaskViewButton   /t REG_DWORD /d 0 /f *>$null   # Zobrazeni ukolu = Vypnuto
+        & reg add $adv /v TaskbarDa            /t REG_DWORD /d 0 /f *>$null   # Widgety = Vypnuto
         $nsp = "$r\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
         & reg add $nsp /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 0 /f *>$null   # Tento pocitac
         & reg add $nsp /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 0 /f *>$null   # Slozka uzivatele
@@ -625,7 +628,10 @@ try {
         & reg unload "HKU\WPDEF" *>$null
         if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 1; & reg unload "HKU\WPDEF" *>$null }
     }
-    Write-Host "    [i] Start vlevo, lupa jako ikona, pripony viditelne, ikony na plose (Tento PC/Slozka/Kos)." -ForegroundColor DarkGray
+    # Widgety a "Pokracovat" (Cross-Device Resume) vypnout i strojovou politikou = plati pro vsechny uzivatele
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f *>$null
+    & reg add "HKLM\SOFTWARE\Microsoft\PolicyManager\default\Connectivity\DisableCrossDeviceResume" /v value /t REG_DWORD /d 1 /f *>$null
+    Write-Host "    [i] Start vlevo, Hledat skryto, Task View/Widgety/Pokracovat vypnuto, pripony viditelne, ikony na plose." -ForegroundColor DarkGray
 } catch { Write-Warning "    Personalizace registru: $($_.Exception.Message)" }
 
 # Pripnuti na hlavni panel v presnem poradi (Edge pryc) pres LayoutModification.xml.

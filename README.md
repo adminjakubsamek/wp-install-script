@@ -144,7 +144,10 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
   - `TaskbarAl = 0` — Start/hlavní panel zarovnán doleva.
   - `TaskbarGlomLevel = 0` a `MMTaskbarGlomLevel = 0` — vždy slučovat ikony oken (i na 2. monitoru).
   - `HideFileExt = 0` — zobrazit přípony souborů.
-- `…\Search` → `SearchboxTaskbarMode = 1` — hledání jen jako ikona (lupa).
+- `…\Search` → `SearchboxTaskbarMode = 0` — **Hledat = Skrýt**.
+  - `…\Advanced` → `ShowTaskViewButton = 0` (Zobrazení úkolů vyp.), `TaskbarDa = 0` (Widgety vyp.).
+  - `HKLM\SOFTWARE\Policies\Microsoft\Dsh` → `AllowNewsAndInterests = 0` (Widgety vyp. strojově).
+  - `HKLM\…\PolicyManager\default\Connectivity\DisableCrossDeviceResume = 1` (Pokračovat vyp. strojově).
 - `…\Explorer\HideDesktopIcons\NewStartPanel` (ikony na ploše, `0` = zobrazit):
   - `{20D04FE0-3AEA-1069-A2D8-08002B30309D}` — Tento počítač.
   - `{59031a47-3f72-44a7-89c5-5595fe6b30ee}` — Složka uživatele.
@@ -186,7 +189,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 
 ## Hlavní panel / Start / plocha
 
-- **Start vlevo**, **lupa jako ikona**, **sloučené ikony oken**, **viditelné přípony**.
+- **Start vlevo**, **Hledat skryto**, **Zobrazení úkolů / Widgety / Pokračovat vypnuto**, **sloučené ikony oken**, **viditelné přípony**.
 - **Na ploše**: Tento počítač, Složka uživatele, Koš.
 - **Připnutí na panel v pořadí**: Chrome → Firefox → Průzkumník → Outlook → Teams → Výstřižky (**Edge odepnut**).
 - Připnutí na panel se nasazuje **policy metodou** (`HKLM\…\Explorer\LayoutXMLPath` → `C:\ProgramData\WPBranding\TaskbarLayout.xml`), protože na Win11 24H2/25H2 už metoda přes Default profil nefunguje. Projeví se **po restartu** (na buildu 26200.5722+ i u stávajících uživatelů).
