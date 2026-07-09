@@ -314,9 +314,15 @@ wp-install-script/
 
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
+- **Zdroj `winget` napevno** — instalace používají `--source winget`, takže se **obchází zdroj `msstore`**.
+  Na čerstvě nainstalovaném Windows (bez aktualizací) má App Installer starý certifikát pro `msstore`
+  (`0x8a15005e: server certificate did not match`) a bez určení zdroje by winget odmítl instalovat. Tímto je to ošetřené.
+- **Retry jen na 1618** — opakuje se pouze při „another installation in progress"; ostatní chyby končí hned
+  (dřív retry zbytečně čekal 3×30 s i u trvalých chyb).
 - **Chyba 1618 „another installation in progress"** — Windows dovolí jen jednu MSI instalaci naráz.
   Když během běhu instaluje něco na pozadí (Windows Update, aktualizace Store aplikací), MSI aplikace
   by jinak spadly. Instalační smyčka proto při neúspěchu **3× zopakuje pokus s pauzou 30 s**.
+- **Doporučení na čerstvém stroji** — ideálně nechat proběhnout prvotní Windows Update (nebo aspoň aktualizaci App Installeru), jinak mohou instalace narážet na běžící aktualizace (1618) nebo starý `msstore` certifikát. Skript je idempotentní, takže **druhý běh po restartu** bezpečně doinstaluje, co poprvé selhalo kvůli běžícím aktualizacím.
 - **Opakované spuštění (idempotence)** — skript lze pustit znovu bez reinstalace:
   aplikace přes winget se jen aktualizují (nebo přeskočí, když jsou aktuální), **M365 se neodstraňuje**
   (jen zaktualizuje), Firefox se přeskočí, pokud je nainstalovaný, a tiskárna se přeskočí, pokud existuje.

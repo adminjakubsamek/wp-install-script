@@ -220,7 +220,7 @@ try {
 
 if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIsOurs) {
     try {
-        & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --accept-package-agreements --accept-source-agreements 2>$null
+        & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements 2>$null
         $odtSetup = Join-Path $env:ProgramFiles 'OfficeDeploymentTool\setup.exe'
         if (Test-Path $odtSetup) {
             $rmXml = @"
@@ -293,7 +293,7 @@ if ($RemoveThirdPartyAV) {
 # --- 5c) Instalace aplikaci ---
 $ok = @(); $failed = @()
 foreach ($a in $apps) {
-    $wgArgs = @('install','--id', $a.Id, '-e', '--silent',
+    $wgArgs = @('install','--id', $a.Id, '-e', '--silent', '--source', 'winget',
                 '--accept-package-agreements','--accept-source-agreements',
                 '--disable-interactivity')
     $scope = if ($a.ContainsKey('Scope')) { $a.Scope } else { 'machine' }
@@ -302,18 +302,19 @@ foreach ($a in $apps) {
 
     Write-Host "[>] $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
     # winget install sam upgraduje (kdyz je novejsi) nebo neudela nic (kdyz je aktualni) - NEreinstaluje.
-    # Retry: kdyz jina instalace drzi Windows Installer (chyba 1618), pockame a zkusime znovu.
-    $okCodes = @(0, -1978335189, -1978335135, -1978334963)
+    $okCodes    = @(0, -1978335189, -1978335135, -1978334963)   # OK / uz aktualni / uz nainstalovano
+    $retryCodes = @(-1978334974, -1978335226)                   # 1618 = jina instalace bezi -> ma smysl opakovat
     $code = $null
     for ($try = 1; $try -le 4; $try++) {
         & $winget @wgArgs
         $code = $LASTEXITCODE
         if ($okCodes -contains $code) { break }
-        if ($try -lt 4) {
-            Write-Host "    [~] Instalace se nezdarila (kod $code) - mozna bezi jina instalace / Windows Update. Cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
+        if ($try -lt 4 -and $retryCodes -contains $code) {
+            Write-Host "    [~] Instalacni sluzba je zaneprazdnena (1618) - cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
             Start-Sleep -Seconds 30
             continue
         }
+        break   # jina chyba nez 1618 -> opakovani nema smysl, konci hned
     }
     switch ($code) {
         0           { Write-Host "    [i] nainstalovano / zaktualizovano." -ForegroundColor DarkGray; $ok += $a.Id }
@@ -376,7 +377,7 @@ try {
     Write-Host "    [i] Office jazyk: $offLang (jediny)" -ForegroundColor DarkGray
 
     # winget stahne nejnovejsi ODT a rozbali setup.exe do %ProgramFiles%\OfficeDeploymentTool
-    & $winget install --id Microsoft.OfficeDeploymentTool -e --silent `
+    & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget `
         --accept-package-agreements --accept-source-agreements 2>$null
     $setup = Join-Path $odtDir 'setup.exe'
     if (-not (Test-Path $setup)) {
