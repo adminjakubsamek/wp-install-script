@@ -387,9 +387,25 @@ try {
     }
     if ($setup -and (Test-Path $setup)) {
         Write-Host "    ODT: $setup" -ForegroundColor DarkGray
-        Start-Process -FilePath $setup -ArgumentList "/configure `"$work\office.xml`"" -Wait -NoNewWindow
-        Write-Host "    [i] M365 Apps nainstalovany. Aktivace = rucne pri prihlaseni uzivatele." -ForegroundColor DarkGray
-        $ok += 'Microsoft365Apps'
+        $officeOk = $false; $odtExit = $null
+        for ($t = 1; $t -le 2; $t++) {
+            $proc = Start-Process -FilePath $setup -ArgumentList "/configure `"$work\office.xml`"" -Wait -NoNewWindow -PassThru
+            $odtExit = $proc.ExitCode
+            for ($i = 0; $i -lt 12; $i++) {   # pockej az ~2 min, nez se instalace projevi v registru
+                $c = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
+                if ($c -and $c.PSObject.Properties['ProductReleaseIds'] -and $c.ProductReleaseIds -match 'O365BusinessRetail') { $officeOk = $true; break }
+                Start-Sleep -Seconds 10
+            }
+            if ($officeOk) { break }
+            if ($t -lt 2) { Write-Host "    [~] M365 se zatim nenainstaloval (ODT kod $odtExit) - zkousim jeste jednou..." -ForegroundColor DarkYellow }
+        }
+        if ($officeOk) {
+            Write-Host "    [i] M365 Apps nainstalovany (overeno v registru). Aktivace = rucne pri prihlaseni." -ForegroundColor DarkGray
+            $ok += 'Microsoft365Apps'
+        } else {
+            $m = "M365 se nenainstaloval (ODT kod $odtExit) - casto kvuli bezicimu Windows Update; spust skript znovu po dokonceni aktualizaci"
+            Write-Warning "    $m"; $failed += 'Microsoft365Apps'; $script:Issues += $m
+        }
     } else {
         Write-Warning "    ODT setup.exe nenalezen - M365 preskoceno."
         $failed += 'Microsoft365Apps (ODT nenalezen)'
@@ -457,21 +473,24 @@ if ($InstallPrinter) {
   } else {
     Write-Host "[*] Instalace tiskarny TOSHIBA-recepce..." -ForegroundColor Cyan
     try {
-        # ovladac (velky) ze stejneho zdroje jako zbytek (BaseUrl); nahraj ToshibaDRV.zip do koren zdroje
-        $relUrl = "$BaseUrl/ToshibaDRV.zip$Sas"
-        Invoke-WebRequest -Uri $relUrl -OutFile "$work\ToshibaDRV.zip" -UseBasicParsing
-        Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
-        Get-RepoFile -Path 'tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$work\tisk-recepce.ps1"
-        # overit, ze tiskarna opravdu vznikla, az pak nastavit prava a hlasit OK
-        if (Get-Printer -Name 'TOSHIBA-recepce' -ErrorAction SilentlyContinue) {
-            Get-RepoFile -Path 'SetACL.exe' -OutFile "$work\SetACL.exe"
-            & "$work\SetACL.exe" -on "TOSHIBA-recepce" -ot prn -actn ace -ace "n:Everyone;p:man_docs" -ace "n:Everyone;p:print"
-            Write-Host "    [i] Tiskarna TOSHIBA-recepce nainstalovana." -ForegroundColor DarkGray
-            $ok += 'TOSHIBA-recepce'
+        # ovladac (velky) ze stejneho zdroje (BaseUrl); ToshibaDRV.zip musi byt v koreni zdroje (na GitHub raw = primo v repu)
+        if (-not (Get-RepoFileQuiet -Path 'ToshibaDRV.zip' -OutFile "$work\ToshibaDRV.zip")) {
+            $m = "Tiskarna: ToshibaDRV.zip neni ve zdroji ($BaseUrl) - nahraj ho tam a spust znovu"
+            Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
         } else {
-            Write-Warning "    Tiskarna se nevytvorila (ovladac/INF?) - viz vystup tisk-recepce.ps1 vyse."
-            $failed += 'TOSHIBA-recepce (ovladac/INF)'
+            Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
+            Get-RepoFile -Path 'tisk-recepce.ps1' -OutFile "$work\tisk-recepce.ps1"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$work\tisk-recepce.ps1"
+            # overit, ze tiskarna opravdu vznikla, az pak nastavit prava a hlasit OK
+            if (Get-Printer -Name 'TOSHIBA-recepce' -ErrorAction SilentlyContinue) {
+                Get-RepoFile -Path 'SetACL.exe' -OutFile "$work\SetACL.exe"
+                & "$work\SetACL.exe" -on "TOSHIBA-recepce" -ot prn -actn ace -ace "n:Everyone;p:man_docs" -ace "n:Everyone;p:print"
+                Write-Host "    [i] Tiskarna TOSHIBA-recepce nainstalovana." -ForegroundColor DarkGray
+                $ok += 'TOSHIBA-recepce'
+            } else {
+                Write-Warning "    Tiskarna se nevytvorila (ovladac/INF?) - viz vystup tisk-recepce.ps1 vyse."
+                $failed += 'TOSHIBA-recepce (ovladac/INF)'
+            }
         }
     } catch {
         Write-Warning "    Tiskarna preskocena: $($_.Exception.Message)"
@@ -570,6 +589,8 @@ try {
 # Defender - zapnout "Rizeni aplikaci a prohlizecu" (reputace + blokovani PUA) pro vsechny
 try {
     Set-MpPreference -PUAProtection Enabled -ErrorAction SilentlyContinue
+    # PUA i pres policy klic - Set-MpPreference blokuje Tamper Protection, policy klic ne
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v PUAProtection /t REG_DWORD /d 1 /f *>$null
     & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Warn /f *>$null
     & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableSmartScreen /t REG_DWORD /d 1 /f *>$null
     & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v ShellSmartScreenLevel /t REG_SZ /d Warn /f *>$null
@@ -602,6 +623,7 @@ try {
 # HKCU se tyka jen aktualniho uctu; aby nastaveni dostali i nove zalozeni uzivatele,
 # zapisujeme zaroven do Default hive (C:\Users\Default\NTUSER.DAT).
 Write-Host "[*] Personalizace (taskbar / Start / plocha)..." -ForegroundColor Cyan
+$eapPers = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'   # chyba jednoho reg.exe nesmi shodit cely blok
 try {
     $loaded = $false
     & reg load "HKU\WPDEF" "C:\Users\Default\NTUSER.DAT" *>$null
@@ -619,6 +641,7 @@ try {
         & reg add $adv /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f *>$null   # totez i ve starsim umisteni
         & reg add $adv /v ShowTaskViewButton   /t REG_DWORD /d 0 /f *>$null   # Zobrazeni ukolu = Vypnuto
         & reg add $adv /v TaskbarDa            /t REG_DWORD /d 0 /f *>$null   # Widgety = Vypnuto
+        & reg add $adv /v IsEnabled            /t REG_DWORD /d 0 /f *>$null   # Pokracovat (Resume) = Vypnuto
         $nsp = "$r\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
         & reg add $nsp /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 0 /f *>$null   # Tento pocitac
         & reg add $nsp /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 0 /f *>$null   # Slozka uzivatele
@@ -629,11 +652,11 @@ try {
         & reg unload "HKU\WPDEF" *>$null
         if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 1; & reg unload "HKU\WPDEF" *>$null }
     }
-    # Widgety a "Pokracovat" (Cross-Device Resume) vypnout i strojovou politikou = plati pro vsechny uzivatele
+    # Widgety vypnout i strojovou politikou (Dsh je zapisovatelne adminem; PolicyManager\default NE - je chraneny)
     & reg add "HKLM\SOFTWARE\Policies\Microsoft\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f *>$null
-    & reg add "HKLM\SOFTWARE\Microsoft\PolicyManager\default\Connectivity\DisableCrossDeviceResume" /v value /t REG_DWORD /d 1 /f *>$null
     Write-Host "    [i] Start vlevo, Hledat skryto, Task View/Widgety/Pokracovat vypnuto, pripony viditelne, ikony na plose." -ForegroundColor DarkGray
 } catch { Write-Warning "    Personalizace registru: $($_.Exception.Message)" }
+finally { $ErrorActionPreference = $eapPers }
 
 # Pripnuti na hlavni panel v presnem poradi (Edge pryc) pres LayoutModification.xml.
 # Plati pro NOVE prihlasene uzivatele (zaklada se z Default profilu).
@@ -778,7 +801,7 @@ try {
     Set-ItemProperty -Path $sysPol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
 } catch { $m = "Tapeta/zamykaci obrazovka: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
-# --- 8h) Vychozi aplikace (Chrome=prohlizec/pdf?/mailto, VLC=avi/mp3/mp4, Adobe=pdf) ---
+# --- 8h) Vychozi aplikace (Chrome=web, VLC=avi/mp3/mp4, Adobe=pdf, Outlook=mailto, 7-Zip=archivy) ---
 if ($SetDefaultApps) {
     function Get-CapProgId { param($CapRel,$Type,$Name)
         foreach ($root in 'HKLM:\SOFTWARE','HKLM:\SOFTWARE\WOW6432Node') {
@@ -804,6 +827,17 @@ if ($SetDefaultApps) {
     if (Test-Path $pdfKey) { $pdf = (Get-Item $pdfKey).Property | Where-Object { $_ -like '*Acro*' -or $_ -like '*Adobe*' } | Select-Object -First 1 }
     if (-not $pdf) { $pdf = 'AcroExch.Document.DC' }
     $want += @{ Id='.pdf'; ProgId=$pdf; App='Adobe Acrobat Reader' }
+    # 7-Zip: archivni pripony (jen ty, kde 7-Zip realne zaregistroval ProgID -> zadne rozbite asociace)
+    function Get-ArchProgId { param($Ext,$Match)
+        $k = "HKLM:\SOFTWARE\Classes\$Ext\OpenWithProgids"
+        if (Test-Path $k) { $hit = (Get-Item $k).Property | Where-Object { $_ -like "$Match*" } | Select-Object -First 1; if ($hit) { return $hit } }
+        return $null
+    }
+    foreach ($e in '.7z','.zip','.rar','.tar','.gz','.bz2','.xz','.cab','.iso','.wim') {
+        $pg = Get-ArchProgId $e '7-Zip'
+        if (-not $pg) { $cand = '7-Zip.' + $e.TrimStart('.'); if (Test-Path "HKLM:\SOFTWARE\Classes\$cand") { $pg = $cand } }
+        if ($pg) { $want += @{ Id=$e; ProgId=$pg; App='7-Zip' } }
+    }
 
     # 1) NOVI uzivatele: appassoc.xml + DISM (repo verze ma prednost, pokud existuje)
     $xmlPath = "$work\appassoc.xml"

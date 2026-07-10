@@ -130,7 +130,8 @@ se nainstaluje vše v rumunštině, pro český (`cs-CZ`) v češtině atd. Žá
 - **Obrázek pozadí na přihlašovací obrazovce** (`HKLM\SOFTWARE\Policies\Microsoft\Windows\System`):
   - `DisableLogonBackgroundImage = 0` (zobrazovat).
 - **Defender SmartScreen / PUA** (Řízení aplikací a prohlížečů):
-  - `Set-MpPreference -PUAProtection Enabled` (blokovat potenciálně nežádoucí aplikace).
+  - `Set-MpPreference -PUAProtection Enabled` + policy `HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\PUAProtection = 1`
+    (policy klíč funguje i při zapnuté **Tamper Protection**, kterou `Set-MpPreference` jinak blokuje).
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer` → `SmartScreenEnabled = Warn`.
   - `HKLM\SOFTWARE\Policies\Microsoft\Windows\System` → `EnableSmartScreen = 1`, `ShellSmartScreenLevel = Warn`.
 - **Indexace celého disku (Enhanced)** (`HKLM\SOFTWARE\Microsoft\Windows Search`):
@@ -209,7 +210,7 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 ## Výchozí aplikace a asociace souborů (vč. 7-Zip)
 
 Skript nastavuje tyto výchozí aplikace: **Chrome** pro http/https/.htm/.html, **Adobe** pro .pdf,
-**Outlook** pro mailto, **VLC** pro .avi/.mp3/.mp4. **ProgID se čtou přímo z registru** (z `Capabilities`
+**Outlook** pro mailto, **VLC** pro .avi/.mp3/.mp4, **7-Zip** pro archivy (.7z/.zip/.rar/.tar/.gz/.bz2/.xz/.cab/.iso/.wim — jen ty, které 7-Zip reálně zaregistruje). **ProgID se čtou přímo z registru** (z `Capabilities`
 nainstalovaných aplikací), takže nezávisí na verzi ani jazyku a **není potřeba nic exportovat**.
 
 Nasazení probíhá dvěma cestami, protože Windows 11 chrání výchozí aplikace per-uživatel hashem:
@@ -314,6 +315,9 @@ wp-install-script/
 
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
+- **M365 se ověřuje** — po instalaci se kontroluje registr ClickToRun; když se Office nenainstaluje (často kvůli běžícímu Windows Update), zkusí se **ještě jednou** a případně se to nahlásí jako chyba (ne falešný úspěch).
+- **Ovladač tiskárny** — `ToshibaDRV.zip` se stahuje z `$BaseUrl` (dřív to byl GitHub *release* asset). Musí být **přímo ve zdroji** (na GitHub raw = v repu, na Storage v kontejneru). Chybí-li, tiskárna se přeskočí s hláškou, nespadne.
+- **„Pokračovat"** se vypíná per-uživatel (`Advanced\IsEnabled = 0`), ne přes `PolicyManager\default` — ten je chráněný a zápis do něj hlásí „Přístup byl odepřen".
 - **Zdroj `winget` napevno** — instalace používají `--source winget`, takže se **obchází zdroj `msstore`**.
   Na čerstvě nainstalovaném Windows (bez aktualizací) má App Installer starý certifikát pro `msstore`
   (`0x8a15005e: server certificate did not match`) a bez určení zdroje by winget odmítl instalovat. Tímto je to ošetřené.
