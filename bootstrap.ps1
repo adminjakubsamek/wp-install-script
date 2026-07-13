@@ -21,6 +21,7 @@
 #   - GitHub raw (docasne/testovaci): https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main
 $BaseUrl     = 'https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main'
 $Sas         = ''   # volitelny read-only SAS vcetne '?', napr. '?sv=...&sig=...'; prazdne = anonymni/verejne
+$DriverUrl   = 'https://github.com/adminjakubsamek/wp-install-script/releases/latest/download/ToshibaDRV.zip'  # ovladac tiskarny (GitHub release asset); pri migraci na Storage sem dej Storage URL
 $Restart     = $true                  # na konci restartovat
 $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic neinstalovat
 # Log se uklada na plochu admina (viz 0b) - zadny zapis do C:\ProgramData
@@ -31,13 +32,13 @@ $RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R 
 $RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
 $UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook*.lnk','Word.lnk','Excel.lnk','TeamViewer.lnk')  # smazatelne kopie na plochu (Outlook* = i 'Outlook (classic)')
 $ClearPublicDesktop       = $true     # smazat (ne-smazatelne) zastupce z verejne plochy
-$SetWallpaper             = $true     # nastavit tapetu vsem uzivatelum
-$SetLockScreen            = $true     # nastavit zamykaci obrazovku vsem uzivatelum
+$SetWallpaper             = $true     # nastavit vychozi tapetu (MENITELNOU) aktualnimu i novym uzivatelum
+$SetLockScreen            = $false    # $true nastavi zamykaci obrazovku, ale UZAMKNE ji (Win11 jinak neumi) -> vychozi vypnuto
 # Obrazky: skript zkusi stahnout z repa config/branding/{wallpaper.jpg,lockscreen.jpg};
 # kdyz tam nejsou, pouzije vychozi Win11 img0.jpg.
 $WallpaperFallback        = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
 $LockScreenFallback       = 'C:\Windows\Web\Wallpaper\Windows\img0.jpg'
-$SetDefaultApps           = $true     # nastavit vychozi aplikace (Chrome/VLC/Adobe/Outlook); ProgID z registru, novi=DISM + aktualni=SetUserFTA
+$SetDefaultApps           = $true     # vychozi aplikace pro NOVE uzivatele (Chrome/VLC/Adobe/Outlook/7-Zip) pres DISM; ProgID cte z registru
 $AdminUser                = 'admin'   # ucet, kteremu se nastavi admin prava + heslo bez expirace (HESLO rucne)
 # ====================================================================
 
@@ -90,14 +91,13 @@ function Get-RepoFile {
     Write-Host "    [+] $Path" -ForegroundColor DarkGray
 }
 
-function Get-RepoFileQuiet {
-    # stahne soubor z repa; pri 404 NEhazi chybu (zadny sum v logu), vraci $true/$false
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
-    $uri = "$BaseUrl/$Path$Sas"
+function Get-UrlQuiet {
+    # stahne soubor z plne URL; pri 404/chybe NEhazi (zadny sum v logu), vraci $true/$false. Nasleduje presmerovani (napr. GitHub release).
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$OutFile)
     try {
         Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
         $hc = New-Object System.Net.Http.HttpClient
-        $resp = $hc.GetAsync($uri).GetAwaiter().GetResult()
+        $resp = $hc.GetAsync($Url).GetAwaiter().GetResult()
         $ok = $false
         if ($resp.IsSuccessStatusCode) {
             $bytes = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
@@ -108,6 +108,11 @@ function Get-RepoFileQuiet {
         }
         $hc.Dispose(); return $ok
     } catch { return $false }
+}
+function Get-RepoFileQuiet {
+    # stahne soubor z repa ($BaseUrl); pri 404 NEhazi chybu, vraci $true/$false
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
+    return (Get-UrlQuiet -Url "$BaseUrl/$Path$Sas" -OutFile $OutFile)
 }
 
 # --- 3) Detekce jazyka Windows (display language) - aplikace se instaluji v jazyce Windows ---
@@ -193,8 +198,8 @@ if ($PreviewOnly) {
     Write-Host "Poznamka na plochu admina: ESET, tiskarny, migrace, Chrome, OneDrive, heslo+sifrovani"
     Write-Host "Predinstalacni uklid: OEM Office=$RemovePreinstalledOffice, cizi AV=$RemoveThirdPartyAV"
     Write-Host "Plocha uzivatele (smazatelne): $($UserDesktopShortcuts -join ', '); vycistit verejnou=$ClearPublicDesktop"
-    Write-Host "Tapeta=$SetWallpaper, zamykaci obrazovka=$SetLockScreen (vsem uzivatelum, PersonalizationCSP)"
-    Write-Host "Vychozi aplikace: $SetDefaultApps (Chrome/VLC/Adobe/Outlook; DISM novi + SetUserFTA aktualni)"
+    Write-Host "Tapeta=$SetWallpaper (menitelna), zamykaci obrazovka=$SetLockScreen (pokud ano, uzamkne ji)"
+    Write-Host "Vychozi aplikace: $SetDefaultApps (Chrome/VLC/Adobe/Outlook/7-Zip; DISM = nove uzivatele)"
     Write-Host "Napajeni: nejvyssi vykon, uspavani ze site=Nikdy; System Restore 5%; popisek C: = OS"
     Write-Host "Ucet admin: admin prava + heslo bez expirace (heslo rucne); Defender SmartScreen/PUA on; indexace Enhanced"
     Write-Host "Vlastni prikazy: BitLocker off, RDP UDP/dialog off, NCD auto-tiskarny off, feature-update fix, casove pasmo CET + sync"
@@ -473,9 +478,9 @@ if ($InstallPrinter) {
   } else {
     Write-Host "[*] Instalace tiskarny TOSHIBA-recepce..." -ForegroundColor Cyan
     try {
-        # ovladac (velky) ze stejneho zdroje (BaseUrl); ToshibaDRV.zip musi byt v koreni zdroje (na GitHub raw = primo v repu)
-        if (-not (Get-RepoFileQuiet -Path 'ToshibaDRV.zip' -OutFile "$work\ToshibaDRV.zip")) {
-            $m = "Tiskarna: ToshibaDRV.zip neni ve zdroji ($BaseUrl) - nahraj ho tam a spust znovu"
+        # ovladac (velky) z $DriverUrl (GitHub release asset; nasleduje presmerovani). Pri migraci zmen $DriverUrl na Storage.
+        if (-not (Get-UrlQuiet -Url $DriverUrl -OutFile "$work\ToshibaDRV.zip")) {
+            $m = "Tiskarna: ovladac se nepodarilo stahnout - zkontroluj `$DriverUrl ($DriverUrl)"
             Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
         } else {
             Expand-Archive -Path "$work\ToshibaDRV.zip" -DestinationPath 'C:\Program Files\ToshibaDRV' -Force
@@ -768,38 +773,58 @@ try {
     }
 } catch { Write-Warning "    Zastupci na plochu: $($_.Exception.Message)" }
 
-# --- 8g) Tapeta + zamykaci obrazovka pro vsechny uzivatele (PersonalizationCSP) ---
+# --- 8g) Tapeta (menitelna) + zamykaci obrazovka ---
 Write-Host "[*] Tapeta a zamykaci obrazovka..." -ForegroundColor Cyan
+$eapWall = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
 try {
     $brandDir = 'C:\ProgramData\WPBranding'
     if (-not (Test-Path $brandDir)) { New-Item -ItemType Directory -Path $brandDir -Force | Out-Null }
 
-    # obrazky drzime v $brandDir (i vychozi Win11), aby CSP mel stabilni cestu mimo C:\Windows
+    # obrazky drzime v $brandDir (i vychozi Win11) pro stabilni cestu mimo C:\Windows
     $wall = "$brandDir\wallpaper.jpg"
-    if (-not (Get-RepoFileQuiet -Path 'config/branding/wallpaper.jpg'  -OutFile $wall)) { Copy-Item $WallpaperFallback  $wall -Force -ErrorAction SilentlyContinue }
+    if (-not (Get-RepoFileQuiet -Path 'config/branding/wallpaper.jpg'  -OutFile $wall)) { Copy-Item $WallpaperFallback  $wall -Force }
     $lock = "$brandDir\lockscreen.jpg"
-    if (-not (Get-RepoFileQuiet -Path 'config/branding/lockscreen.jpg' -OutFile $lock)) { Copy-Item $LockScreenFallback $lock -Force -ErrorAction SilentlyContinue }
+    if (-not (Get-RepoFileQuiet -Path 'config/branding/lockscreen.jpg' -OutFile $lock)) { Copy-Item $LockScreenFallback $lock -Force }
 
     $csp = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
-    if (-not (Test-Path $csp)) { New-Item -Path $csp -Force | Out-Null }
+    # TAPETU NIKDY nezamykame (PersonalizationCSP by ji uzamkl = "spravuje organizace") -> odstranit pripadny STARY zamek tapety,
+    # takze opetovne spusteni odemkne i uz postizene stroje.
+    if (Test-Path $csp) { foreach ($v in 'DesktopImagePath','DesktopImageUrl','DesktopImageStatus') { Remove-ItemProperty -Path $csp -Name $v -ErrorAction SilentlyContinue } }
 
     if ($SetWallpaper -and (Test-Path $wall)) {
-        Set-ItemProperty -Path $csp -Name 'DesktopImagePath'   -Value $wall -Type String
-        Set-ItemProperty -Path $csp -Name 'DesktopImageUrl'    -Value $wall -Type String
-        Set-ItemProperty -Path $csp -Name 'DesktopImageStatus' -Value 1 -Type DWord
-        Write-Host "    [i] Tapeta: $wall" -ForegroundColor DarkGray
+        # nastavit jako VYCHOZI tapetu, ale MENITELNOU: HKCU (aktualni uzivatel) + Default hive (novi uzivatele)
+        & reg add "HKCU\Control Panel\Desktop" /v Wallpaper      /t REG_SZ /d "$wall" /f *>$null
+        & reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d 10      /f *>$null   # 10 = Vyplnit
+        & reg add "HKCU\Control Panel\Desktop" /v TileWallpaper  /t REG_SZ /d 0       /f *>$null
+        $loaded = $false
+        & reg load "HKU\WPDEF" "C:\Users\Default\NTUSER.DAT" *>$null; if ($LASTEXITCODE -eq 0) { $loaded = $true }
+        if ($loaded) {
+            & reg add "HKU\WPDEF\Control Panel\Desktop" /v Wallpaper      /t REG_SZ /d "$wall" /f *>$null
+            & reg add "HKU\WPDEF\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d 10      /f *>$null
+            & reg add "HKU\WPDEF\Control Panel\Desktop" /v TileWallpaper  /t REG_SZ /d 0       /f *>$null
+            [gc]::Collect(); Start-Sleep -Milliseconds 300
+            & reg unload "HKU\WPDEF" *>$null
+        }
+        rundll32.exe user32.dll,UpdatePerUserSystemParameters 1, True   # aplikovat hned pro aktualniho uzivatele
+        Write-Host "    [i] Tapeta nastavena (lze normalne zmenit): $wall" -ForegroundColor DarkGray
     }
+
     if ($SetLockScreen -and (Test-Path $lock)) {
+        # POZOR: na Win11 lze zamykaci obrazovku strojove nastavit jen pres PersonalizationCSP/policy, coz ji UZAMKNE ("spravuje organizace").
+        if (-not (Test-Path $csp)) { New-Item -Path $csp -Force | Out-Null }
         Set-ItemProperty -Path $csp -Name 'LockScreenImagePath'   -Value $lock -Type String
         Set-ItemProperty -Path $csp -Name 'LockScreenImageUrl'    -Value $lock -Type String
         Set-ItemProperty -Path $csp -Name 'LockScreenImageStatus' -Value 1 -Type DWord
-        Write-Host "    [i] Zamykaci obrazovka: $lock" -ForegroundColor DarkGray
+        $sysPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+        if (-not (Test-Path $sysPol)) { New-Item -Path $sysPol -Force | Out-Null }
+        Set-ItemProperty -Path $sysPol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
+        Write-Host "    [i] Zamykaci obrazovka nastavena (UZAMKNE ji - 'spravuje organizace'): $lock" -ForegroundColor DarkYellow
+    } else {
+        # zamykaci obrazovku nezamykat -> odstranit pripadny STARY CSP zamek zamykaci obrazovky
+        if (Test-Path $csp) { foreach ($v in 'LockScreenImagePath','LockScreenImageUrl','LockScreenImageStatus') { Remove-ItemProperty -Path $csp -Name $v -ErrorAction SilentlyContinue } }
     }
-    # ukazovat obrazek zamykaci obrazovky i na prihlasovaci obrazovce (0 = ukazovat)
-    $sysPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
-    if (-not (Test-Path $sysPol)) { New-Item -Path $sysPol -Force | Out-Null }
-    Set-ItemProperty -Path $sysPol -Name 'DisableLogonBackgroundImage' -Value 0 -Type DWord
 } catch { $m = "Tapeta/zamykaci obrazovka: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
+finally { $ErrorActionPreference = $eapWall }
 
 # --- 8h) Vychozi aplikace (Chrome=web, VLC=avi/mp3/mp4, Adobe=pdf, Outlook=mailto, 7-Zip=archivy) ---
 if ($SetDefaultApps) {
@@ -851,15 +876,10 @@ if ($SetDefaultApps) {
     if ($LASTEXITCODE -eq 0) { Write-Host "    [i] Vychozi aplikace pro NOVE uzivatele nasazeny (DISM)." -ForegroundColor DarkGray }
     else { $m = "Vychozi aplikace (DISM) kod $LASTEXITCODE"; Write-Warning "    $m"; $script:Issues += $m }
 
-    # 2) AKTUALNI uzivatel: Win11 chrani per-user defaults hashem -> potreba SetUserFTA.exe (v repu)
-    $fta = "$work\SetUserFTA.exe"
-    if (Get-RepoFileQuiet -Path 'SetUserFTA.exe' -OutFile $fta) {
-        foreach ($w in $want) { & $fta $w.Id $w.ProgId *>$null }
-        Write-Host "    [i] Vychozi aplikace nastaveny i AKTUALNIMU uzivateli (SetUserFTA)." -ForegroundColor DarkGray
-    } else {
-        $m = "Vychozi aplikace pro aktualni ucet: chybi SetUserFTA.exe v repu (bez nej plati jen pro nove uzivatele)"
-        Write-Host "    [i] $m" -ForegroundColor DarkGray; $script:Issues += $m
-    }
+    # 2) AKTUALNI uzivatel: na workgroup Win11 nejde per-user defaults spolehlive nastavit skriptem
+    #    (chrani je hash + kernel driver UCPD.sys; DISM plati jen pro NOVE uzivatele; policy DefaultAssociationsConfiguration jen pro domenove stroje).
+    #    -> aktualni ucet si vychozi aplikace nastavi rucne (Nastaveni > Aplikace > Vychozi aplikace).
+    Write-Host "    [i] Pozn.: vychozi aplikace plati pro NOVE uzivatele; aktualnimu uctu je nutne nastavit rucne (Win11 je chrani hashem)." -ForegroundColor DarkGray
 }
 
 # --- 9) Uklid temp + shrnuti + restart ---

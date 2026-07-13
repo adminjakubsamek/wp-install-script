@@ -27,9 +27,11 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - `$RemoveThirdPartyAV` — nejdřív odinstalovat cizí antiviry (`$true`).
 - `$UserDesktopShortcuts` — zástupci na plochu uživatele (názvy `.lnk`, lze i `*`).
 - `$ClearPublicDesktop` — smazat zástupce z veřejné plochy (`$true`).
-- `$SetWallpaper` / `$SetLockScreen` — nastavit tapetu / zamykací obrazovku všem (`$true`).
+- `$SetWallpaper` — nastavit výchozí tapetu (**měnitelnou**) aktuálnímu i novým uživatelům (`$true`).
+- `$SetLockScreen` — `$true` nastaví zamykací obrazovku, ale **uzamkne ji** (Win11 jinak neumí) → výchozí `$false`.
 - `$WallpaperFallback` / `$LockScreenFallback` — výchozí obrázek, když není v repu.
-- `$SetDefaultApps` — nastavit výchozí aplikace (Chrome, VLC, Adobe, Outlook) novým uživatelům (DISM) i aktuálnímu (SetUserFTA).
+- `$SetDefaultApps` — nastavit výchozí aplikace (Chrome, VLC, Adobe, Outlook, 7-Zip) **novým uživatelům** přes DISM.
+- `$DriverUrl` — URL ovladače tiskárny (`ToshibaDRV.zip`); výchozí je GitHub Release asset, při migraci sem dej Storage URL.
 - `$AdminUser` — účet, kterému se nastaví admin práva + heslo bez expirace (samotné heslo ručně).
 
 ---
@@ -57,8 +59,8 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
     **indexace celého disku C:** (Enhanced) + běžící Windows Search.
 14. **Personalizace** — hlavní panel, Start, plocha (i pro nové uživatele).
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
-16. **Tapeta + zamykací obrazovka** — pro všechny uživatele (PersonalizationCSP).
-16b. **Výchozí aplikace** — ProgID se čtou z registru; noví uživatelé přes DISM, aktuální uživatel přes `SetUserFTA.exe` (je-li v repu). Chrome=http/https/.htm/.html, Adobe=.pdf, Outlook=mailto, VLC=.avi/.mp3/.mp4.
+16. **Tapeta** — výchozí, ale **měnitelná** (HKCU + Default hive); zamykací obrazovka volitelně (uzamkne ji).
+16b. **Výchozí aplikace** — ProgID se čtou z registru a nasadí se **novým uživatelům přes DISM**. Chrome=http/https/.htm/.html, Adobe=.pdf, Outlook=mailto, VLC=.avi/.mp3/.mp4, 7-Zip=archivy. Aktuální účet si je nastaví ručně (viz níže).
 17. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu).
 18. **Úklid dočasných souborů**, výpis shrnutí, **restart**.
 
@@ -124,7 +126,8 @@ se nainstaluje vše v rumunštině, pro český (`cs-CZ`) v češtině atd. Žá
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location` → `Value = Allow`
 - **Automatické časové pásmo** (`HKLM\SYSTEM\CurrentControlSet\Services\tzautoupdate`):
   - `Start = 3` (zapnuto, on-demand).
-- **Tapeta + zamykací obrazovka pro všechny** (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP`):
+- **Tapeta (měnitelná)** — `HKCU\Control Panel\Desktop\Wallpaper` (+ `WallpaperStyle=10`) a totéž v Default hive pro nové uživatele. **Žádný PersonalizationCSP** (ten by tapetu zamkl). Skript navíc odstraní případný starý CSP zámek tapety, takže opětovné spuštění odemkne i dřív postižené stroje.
+- **Zamykací obrazovka (volitelně, `$SetLockScreen=$true`)** — `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP`:
   - `DesktopImagePath` / `DesktopImageUrl` + `DesktopImageStatus = 1`.
   - `LockScreenImagePath` / `LockScreenImageUrl` + `LockScreenImageStatus = 1`.
 - **Obrázek pozadí na přihlašovací obrazovce** (`HKLM\SOFTWARE\Policies\Microsoft\Windows\System`):
@@ -200,7 +203,8 @@ Zapisuje se do aktuálního účtu **i** do Default profilu, takže nastavení d
 
 ## Tapeta a zamykací obrazovka
 
-- Nastaví se **všem uživatelům** přes PersonalizationCSP a **zamknou** (uživatel je v Nastavení nezmění).
+- **Tapeta** se nastaví jako výchozí, ale **zůstane měnitelná** (přes `HKCU` + Default hive, ne PersonalizationCSP). Uživatel si ji může v Nastavení normálně změnit. Skript zároveň odstraní starý CSP zámek tapety (`DesktopImagePath/Url/Status`), takže odemkne i stroje, kde byla dřív zamčená.
+- **Zamykací obrazovku** lze na Win11 strojově nastavit jen jejím **uzamčením** (PersonalizationCSP/policy → „některá nastavení spravuje vaše organizace"). Proto je ve výchozím stavu **vypnutá** (`$SetLockScreen=$false`); zapni ji jen když chceš firemní zamčenou zamykací obrazovku.
 - Obrázky skript hledá v repu: `config/branding/wallpaper.jpg` a `config/branding/lockscreen.jpg`.
 - Když v repu nejsou, použije **výchozí Win11 `img0.jpg`** (modrá „Bloom"). Obrázky se vždy zkopírují do `C:\ProgramData\WPBranding` a CSP ukazuje na tu kopii (stabilní cesta).
 - Na přihlašovací obrazovce se zobrazuje obrázek zamykací obrazovky.
@@ -217,12 +221,15 @@ Nasazení probíhá dvěma cestami, protože Windows 11 chrání výchozí aplik
 
 - **Noví uživatelé** — vygeneruje se `appassoc.xml` a naimportuje přes `dism /online /import-defaultappassociations`.
   (Má-li repo `config/appassoc.xml`, použije se místo vygenerovaného — tvůj vlastní export má přednost.)
-- **Aktuální uživatel** (účet, pod kterým skript běží = koncový uživatel) — nastaví se přes **`SetUserFTA.exe`**,
-  který umí zapsat chráněný per-user hash. Aby to fungovalo, přidej do **kořene repa** `SetUserFTA.exe`
-  (zdarma, https://kolbi.cz/SetUserFTA/). Bez něj se výchozí aplikace nastaví jen novým uživatelům.
+- **Aktuální uživatel** (účet, pod kterým skript běží) — na **workgroup** strojích **nejde nastavit skriptem**.
+  Windows 11 chrání per-user asociace hashem, který od února 2024 hlídá i kernel driver **UCPD.sys** a odmítá
+  zápis přes registr/reg.exe/PowerShell (ACCESS_DENIED). DISM platí jen pro nové uživatele a policy
+  `DefaultAssociationsConfiguration` funguje jen na **doménových** strojích. Aktuální účet si tedy výchozí
+  aplikace nastaví **ručně** (Nastavení → Aplikace → Výchozí aplikace). Volitelně lze použít nástroj
+  **SetUserFTA** (UCPD-kompatibilní verze na https://setuserfta.com), ale skript ho nevyžaduje.
 
 > Proč to dřív nefungovalo: DISM import platí **jen pro nové uživatele**, ne pro účet, pod kterým instaluješ.
-> Když skript spouští přímo koncový uživatel (např. `catalin.barbu`), musí se použít SetUserFTA.
+> Když skript spouští přímo koncový uživatel (např. `catalin.barbu`), výchozí aplikace pro jeho účet nastav ručně.
 
 ---
 
@@ -268,7 +275,6 @@ wp-install-script/
 ├─ azure-pipelines.yml    # publikace do Azure Storage (DevOps -> $web)
 ├─ tisk-recepce.ps1       # instalace tiskárny (volá ho bootstrap)
 ├─ SetACL.exe             # práva tiskárny
-├─ SetUserFTA.exe         # výchozí aplikace pro aktuálního uživatele (volitelné, doporučené)
 ├─ tweaks/
 │  ├─ win10.ps1           # runner
 │  ├─ win10.psm1          # modul tweaků
@@ -316,7 +322,7 @@ wp-install-script/
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
 - **M365 se ověřuje** — po instalaci se kontroluje registr ClickToRun; když se Office nenainstaluje (často kvůli běžícímu Windows Update), zkusí se **ještě jednou** a případně se to nahlásí jako chyba (ne falešný úspěch).
-- **Ovladač tiskárny** — `ToshibaDRV.zip` se stahuje z `$BaseUrl` (dřív to byl GitHub *release* asset). Musí být **přímo ve zdroji** (na GitHub raw = v repu, na Storage v kontejneru). Chybí-li, tiskárna se přeskočí s hláškou, nespadne.
+- **Ovladač tiskárny** — `ToshibaDRV.zip` se stahuje z `$DriverUrl` (výchozí = GitHub Release asset, `releases/latest/download/ToshibaDRV.zip`; sleduje přesměrování). Při migraci na Storage přepiš `$DriverUrl`. Nedostupný ovladač = tiskárna se přeskočí s hláškou, nespadne.
 - **„Pokračovat"** se vypíná per-uživatel (`Advanced\IsEnabled = 0`), ne přes `PolicyManager\default` — ten je chráněný a zápis do něj hlásí „Přístup byl odepřen".
 - **Zdroj `winget` napevno** — instalace používají `--source winget`, takže se **obchází zdroj `msstore`**.
   Na čerstvě nainstalovaném Windows (bez aktualizací) má App Installer starý certifikát pro `msstore`
@@ -337,7 +343,7 @@ wp-install-script/
 - **Odinstalace cizích AV** — best-effort; McAfee/Norton můžou potřebovat vendor nástroj.
 - **Zástupci na ploše** — Chrome, Firefox, Outlook (classic), Word, Excel, TeamViewer; kopírují se do Default profilu (noví uživatelé) **i na plochu admina** (aby je bylo vidět hned). Smazatelné.
 - **Připnutí na panel** — policy přes `LayoutXMLPath` (funguje na 24H2/25H2); projeví se po restartu, na 26200.5722+ i u stávajících uživatelů.
-- **Tapeta a zamykací obrazovka** — přes PersonalizationCSP se nastaví a **zamknou** (uživatel je nezmění).
+- **Tapeta** se nastaví jako výchozí, ale **měnitelná** (HKCU + Default hive, ne PersonalizationCSP). **Zamykací obrazovka** je ve výchozím vypnutá, protože ji Win11 umí nastavit jen uzamčením.
 - **Pořadí ikon v oznamovací oblasti (u hodin)** — Windows 11 to skriptem spolehlivě nenastaví; řeší se ručním přetažením.
 - **Konzole** — QuickEdit je na začátku vypnut, aby kliknutí do okna nepozastavilo běh.
 - **Log na ploše** — každý běh vytvoří nový soubor s časovým razítkem; staré klidně smaž.
