@@ -22,6 +22,9 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 - `$PreviewOnly` — jen vypsat plán, nic neinstalovat (`$false`).
 - `$InstallPrinter` — instalovat tiskárnu TOSHIBA-recepce (`$true`).
 - `$RenameToSerial` — přejmenovat PC dle sériového čísla (`$true`).
+- `$RenameOnlyDefaultNames` — přejmenovat **jen počítače s továrním názvem** (`$true`); ručně pojmenovaná PC zůstanou beze změny.
+- `$DefaultNamePatterns` — co se považuje za tovární název (`DESKTOP-XXXXXXX`, `LAPTOP-XXXXXXX`, `WIN-…`, `MININT-…`, `PC`, `USER-PC` apod.).
+- `$RemoveENKeyboard` — odebrat sekundární en-US klávesnici (`$true`); na anglických Windows se neprovede.
 - `$NamePrefix` — volitelná předpona názvu PC (např. `'WP-'`); prázdné = jen sériové číslo.
 - `$RemovePreinstalledOffice` — nejdřív odinstalovat OEM Office balast (`$true`).
 - `$RemoveThirdPartyAV` — nejdřív odinstalovat cizí antiviry (`$true`).
@@ -40,7 +43,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 
 1. **Kontrola práv správce** + vypnutí QuickEditu + start logu na plochu admina.
 2. **Detekce jazyka Windows** → `cs` / `en` / `de` (fallback `cs`); řídí jazyk aplikací.
-3. **Přejmenování počítače** podle sériového čísla z BIOSu (projeví se po restartu).
+3. **Přejmenování počítače** podle sériového čísla z BIOSu — **jen má-li PC tovární název** (projeví se po restartu).
 4. **Ověření wingetu** (najde i na čerstvém stroji bez PATH).
 5. **Předinstalační úklid (jako PRVNÍ akce):**
    - odinstaluje **všechny předinstalované Office Click-to-Run** produkty a jazykové mutace (ODT *Remove All*);
@@ -49,7 +52,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 6. **Instalace aplikací přes winget** (nejnovější verze) — viz seznam níže.
 7. **Aktualizace aplikací z Microsoft Store** (na pozadí; přes MDM `UpdateScanMethod`).
 8. **Firefox** — lokalizovaný build přímo od Mozilly (dle jazyka Windows), tichá instalace.
-9. **Microsoft 365 Apps for business** — přes ODT, **jeden jazyk** dle Windows, **bez aktivace**.
+9. **Microsoft 365 Apps for business** — přes ODT, **jeden jazyk** dle Windows, **bez aktivace**. Čeká-li systém na restart, instalace se automaticky **odloží za restart** (naplánovaná úloha).
 10. **Win11 tweaky** — vyčištěný preset Disassembler0 (`tweaks/`).
 11. **Konfigurace aplikací** — pdfsam, vlc, vypnutí Adobe upsellu.
 12. **Tiskárna TOSHIBA-recepce** (volitelné; ovladač z GitHub Release).
@@ -235,7 +238,7 @@ Nasazení probíhá dvěma cestami, protože Windows 11 chrání výchozí aplik
 
 ## Předinstalační úklid (detail)
 
-- **Office balast** — ODT s `<Remove All="TRUE"/>` smaže všechny Click-to-Run produkty a jazykové mutace najednou; pak se (krok 9) nainstaluje čistá jednojazyčná verze.
+- **Office balast** — ODT s `<Remove All="TRUE"/>` smaže všechny Click-to-Run produkty a jazykové mutace najednou; pak se (krok 9) nainstaluje čistá jednojazyčná verze. **Pozor:** po tomto odebrání systém čeká na restart, takže se instalace M365 automaticky odloží za restart (viz `WP-Office-Install`).
 - **Cizí antiviry** — best-effort přes tichý odinstalátor / `msiexec /x`. Tvrdošíjné (McAfee, Norton) můžou vyžadovat vendor nástroj (MCPR, Norton Remove & Reinstall). **ESET se nemaže.**
 
 ---
@@ -321,7 +324,10 @@ wp-install-script/
 
 - **Heslo účtu admin** — skript nastaví jen admin práva a vypnutí expirace; **samotné heslo nastav ručně** (je v poznámce na ploše).
 - **Indexace Outlooku** — celý disk se indexuje (Enhanced); samotné indexování pošty běží až po nastavení Outlook profilu uživatelem.
-- **M365 se ověřuje** — po instalaci se kontroluje registr ClickToRun; když se Office nenainstaluje (často kvůli běžícímu Windows Update), zkusí se **ještě jednou** a případně se to nahlásí jako chyba (ne falešný úspěch).
+- **Přejmenování jen továrních názvů** — počítač se přejmenuje na sériové číslo **pouze** má-li ještě tovární název (`DESKTOP-…`, `LAPTOP-…`, `WIN-…`, `MININT-…`). Pojmenoval-li ho admin ručně, název zůstane. Vypíná se `$RenameOnlyDefaultNames = $false`.
+- **Sekundární en-US klávesnice** — z presetu byl odebrán `AddENKeyboard`; skript navíc en-US aktivně **odebere** (`$RemoveENKeyboard`), ale nikdy na Windows, jejichž jazykem je angličtina.
+- **M365 a čekající restart (chyba 1603)** — Click-to-Run instalace **vždy selže s 1603**, pokud systém čeká na restart. To nastane skoro pokaždé, protože skript předtím odebere OEM Office (*Remove All*) a přejmenuje počítač. Proto skript stav `PendingReboot` **detekuje předem**, marnou instalaci nezkouší a místo toho registruje naplánovanou úlohu **`WP-Office-Install`** (SYSTEM, při startu). Ta po restartu počká, až doběhne Windows Update, nainstaluje M365, doplní zástupce Wordu/Excelu/Outlooku na plochy a **sama se smaže**. Průběh: `C:\ProgramData\WPBranding\Office\post-restart.log`.
+- **ODT logování** — `office.xml` má `<Logging>` do `C:\ProgramData\WPBranding\OfficeLogs`, takže případné selhání jde dohledat.
 - **Ovladač tiskárny** — `ToshibaDRV.zip` se stahuje z `$DriverUrl` (výchozí = GitHub Release asset, `releases/latest/download/ToshibaDRV.zip`; sleduje přesměrování). Při migraci na Storage přepiš `$DriverUrl`. Nedostupný ovladač = tiskárna se přeskočí s hláškou, nespadne.
 - **„Pokračovat"** se vypíná per-uživatel (`Advanced\IsEnabled = 0`), ne přes `PolicyManager\default` — ten je chráněný a zápis do něj hlásí „Přístup byl odepřen".
 - **Zdroj `winget` napevno** — instalace používají `--source winget`, takže se **obchází zdroj `msstore`**.

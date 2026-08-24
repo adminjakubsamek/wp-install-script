@@ -28,6 +28,15 @@ $PreviewOnly = $false                 # $true = jen vypsat co by se delalo, nic 
 $InstallPrinter = $true               # tiskarna TOSHIBA-recepce se instaluje vzdy ($false = preskocit)
 $RenameToSerial = $true               # prejmenovat pocitac dle serioveho cisla (projevi se po restartu)
 $NamePrefix     = ''                  # volitelna predpona nazvu (napr. 'WP-'); prazdne = jen serial
+$RenameOnlyDefaultNames = $true       # prejmenovat JEN kdyz ma PC tovarni/vychozi nazev; vlastni nazvy nechat byt
+$DefaultNamePatterns = @(             # co se povazuje za vychozi nazev (regex, case-insensitive)
+    '^DESKTOP-[A-Z0-9]{7}$'           # standardni Windows (DESKTOP-ABC1234)
+    '^LAPTOP-[A-Z0-9]{7}$'
+    '^WIN-[A-Z0-9]{11}$'              # Windows Server / sysprep
+    '^MININT-[A-Z0-9]+$'              # WinPE / MDT
+    '^(USER|USER-PC|PC|COMPUTER|MYPC|HOME|OEM)$'
+)
+$RemoveENKeyboard = $true             # odebrat sekundarni en-US klavesnici (jen kdyz neni jazykem systemu)
 $RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store OneNote
 $RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
 $UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook*.lnk','Word.lnk','Excel.lnk','TeamViewer.lnk')  # smazatelne kopie na plochu (Outlook* = i 'Outlook (classic)')
@@ -114,6 +123,74 @@ function Get-RepoFileQuiet {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
     return (Get-UrlQuiet -Url "$BaseUrl/$Path$Sas" -OutFile $OutFile)
 }
+function Test-PendingReboot {
+    # ceka-li system na restart, C2R instalace Office konci chybou 1603 -> nema smysl to zkouset
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
+        $pfro = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations
+        if ($pfro -and $pfro.PendingFileRenameOperations) { return $true }
+        $cn  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
+        $acn = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
+        if ($cn -and $acn -and ($cn -ne $acn)) { return $true }   # ceka prejmenovani pocitace
+        return $false
+    } finally { $ErrorActionPreference = $eap }
+}
+function Register-OfficePostRestart {
+    # dolozi instalaci M365 po restartu: naplanovana uloha jako SYSTEM pri startu, po uspechu se sama smaze
+    param([Parameter(Mandatory)][string]$SetupExe, [Parameter(Mandatory)][string]$ConfigXml)
+    try {
+        $base = 'C:\ProgramData\WPBranding\Office'
+        if (-not (Test-Path $base)) { New-Item -ItemType Directory -Path $base -Force | Out-Null }
+        Copy-Item $SetupExe  "$base\setup.exe"  -Force
+        Copy-Item $ConfigXml "$base\office.xml" -Force
+        $runner = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$base = 'C:\ProgramData\WPBranding\Office'
+$log  = "$base\post-restart.log"
+$key  = 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration'
+function W([string]$t) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $t" | Out-File $log -Append -Encoding UTF8 }
+function Test-Office { $c = Get-ItemProperty $key; return ($c -and $c.ProductReleaseIds -match 'O365BusinessRetail') }
+function Add-OfficeShortcuts {
+    # po instalaci doplnit zastupce Wordu/Excelu/Outlooku na plochy (pri behu skriptu jeste neexistovaly)
+    $src = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs'
+    $desks = @('C:\Users\Default\Desktop')
+    $desks += (Get-ChildItem 'C:\Users' -Directory | Where-Object { $_.Name -notin 'Public','Default','Default User','All Users' } | ForEach-Object { Join-Path $_.FullName 'Desktop' })
+    foreach ($pat in 'Outlook (classic).lnk','Outlook.lnk','Word.lnk','Excel.lnk') {
+        $lnk = Get-ChildItem $src -Recurse -Filter $pat | Select-Object -First 1
+        if (-not $lnk) { continue }
+        if ($pat -eq 'Outlook.lnk' -and (Get-ChildItem $src -Recurse -Filter 'Outlook (classic).lnk')) { continue }
+        foreach ($d in $desks) { if (Test-Path $d) { Copy-Item $lnk.FullName (Join-Path $d $lnk.Name) -Force } }
+    }
+    W 'Zastupci Office doplneni na plochy.'
+}
+W 'Start po restartu.'
+if (Test-Office) { W 'Office uz je nainstalovan - ukol splnen.'; Add-OfficeShortcuts; Unregister-ScheduledTask -TaskName 'WP-Office-Install' -Confirm:$false; return }
+Start-Sleep -Seconds 120
+for ($i = 0; $i -lt 60; $i++) {   # pockat, az dobehne Windows Update / jine instalace (max ~30 min)
+    if (-not (Get-Process TrustedInstaller,TiWorker,msiexec)) { break }
+    Start-Sleep -Seconds 30
+}
+W 'Spoustim ODT...'
+$arg = '/configure "' + $base + '\office.xml"'
+$p = Start-Process "$base\setup.exe" -ArgumentList $arg -Wait -NoNewWindow -PassThru
+W ('ODT navratovy kod: ' + $p.ExitCode)
+for ($i = 0; $i -lt 18; $i++) {
+    if (Test-Office) { W 'M365 nainstalovan - ukol splnen.'; Add-OfficeShortcuts; Unregister-ScheduledTask -TaskName 'WP-Office-Install' -Confirm:$false; return }
+    Start-Sleep -Seconds 10
+}
+W 'Nepovedlo se - uloha zustava a zkusi to po dalsim restartu.'
+'@
+        [System.IO.File]::WriteAllText("$base\install-office.ps1", $runner, (New-Object System.Text.UTF8Encoding($false)))
+        $act  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$base\install-office.ps1`""
+        $trg  = New-ScheduledTaskTrigger -AtStartup
+        $prin = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $set  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName 'WP-Office-Install' -Action $act -Trigger $trg -Principal $prin -Settings $set -Force -ErrorAction Stop | Out-Null
+        return $true
+    } catch { return $false }
+}
 
 # --- 3) Detekce jazyka Windows (display language) - aplikace se instaluji v jazyce Windows ---
 try   { $tag = (Get-WinUserLanguageList)[0].LanguageTag }   # napr. ro-RO, cs-CZ
@@ -128,11 +205,20 @@ Write-Host "[*] Jazyk Windows: $tag (aplikace v tomto jazyce; Office=$offLang)" 
 # --- 3b) Prejmenovani pocitace dle serioveho cisla (BIOS) ---
 if ($RenameToSerial) {
     try {
+        # prejmenovavat jen tovarni nazvy - rucne pojmenovane PC nechat byt
+        $isDefaultName = $false
+        foreach ($rx in $DefaultNamePatterns) { if ($env:COMPUTERNAME -match $rx) { $isDefaultName = $true; break } }
+        if ($RenameOnlyDefaultNames -and -not $isDefaultName) {
+            Write-Host "[*] Nazev pocitace '$env:COMPUTERNAME' neni tovarni - prejmenovani preskoceno." -ForegroundColor DarkGray
+            $script:skipRename = $true
+        }
         $serial = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
         if ($serial) { $serial = $serial.Trim() }
         $bad   = @('to be filled by o.e.m.','default string','system serial number','none','o.e.m.','0','na','')
         $clean = if ($serial) { ($serial -replace '[^A-Za-z0-9-]','') } else { '' }
-        if ((-not $clean) -or ($serial.ToLower() -in $bad)) {
+        if ($script:skipRename) {
+            # nic - nazev nastavil admin rucne
+        } elseif ((-not $clean) -or ($serial.ToLower() -in $bad)) {
             Write-Warning "[!] Seriove cislo nepouzitelne ('$serial') - nazev pocitace nechavam."
         } else {
             $newName = ($NamePrefix + $clean)
@@ -214,7 +300,7 @@ Write-Host "[*] Predinstalacni uklid (OEM Office / OneNote / cizi AV)..." -Foreg
 function Get-Prop { param($obj,$name) if ($obj.PSObject.Properties[$name]) { $obj.PSObject.Properties[$name].Value } else { $null } }
 
 # 1) Office: nas M365 (O365BusinessRetail) ponechat a jen zaktualizovat; cizi/OEM Office odstranit
-$script:officeHave = $false; $script:officeIsOurs = $false
+$script:officeHave = $false; $script:officeIsOurs = $false; $script:officeRemoved = $false
 try {
     $c2r = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
     if ($c2r -and $c2r.PSObject.Properties['ProductReleaseIds']) {
@@ -238,8 +324,9 @@ if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIs
             Set-Content -Path "$work\office-remove.xml" -Value $rmXml -Encoding UTF8
             Write-Host "    [>] Odinstalace cizich Office C2R produktu (ODT Remove All)..." -ForegroundColor DarkGray
             Start-Process -FilePath $odtSetup -ArgumentList "/configure `"$work\office-remove.xml`"" -Wait -NoNewWindow
-            Write-Host "    [i] Cizi/OEM Office C2R odebran." -ForegroundColor DarkGray
+            Write-Host "    [i] Cizi/OEM Office C2R odebran (vyzaduje restart pred novou instalaci)." -ForegroundColor DarkGray
             $script:officeHave = $false
+            $script:officeRemoved = $true
         }
     } catch { $m = "OEM Office: ODT Remove All selhal ($($_.Exception.Message))"; Write-Warning "    $m"; $script:Issues += $m }
 } elseif ($script:officeIsOurs) {
@@ -375,6 +462,7 @@ try {
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
   <Updates Enabled="TRUE" />
   <Display Level="None" AcceptEULA="TRUE" />
+  <Logging Level="Standard" Path="C:\ProgramData\WPBranding\OfficeLogs" />
   <RemoveMSI />
 </Configuration>
 "@
@@ -393,23 +481,37 @@ try {
     if ($setup -and (Test-Path $setup)) {
         Write-Host "    ODT: $setup" -ForegroundColor DarkGray
         $officeOk = $false; $odtExit = $null
-        for ($t = 1; $t -le 2; $t++) {
+
+        # C2R instalace SELZE (1603), pokud system ceka na restart - typicky po odebrani OEM Office
+        # nebo po prejmenovani pocitace. V tom pripade to nezkousime a rovnou odlozime za restart.
+        $pending = (Test-PendingReboot) -or $script:officeRemoved
+        if ($pending) {
+            Write-Host "    [~] System ceka na restart (odebrany OEM Office / prejmenovani) - instalace by skoncila chybou 1603." -ForegroundColor DarkYellow
+        } else {
             $proc = Start-Process -FilePath $setup -ArgumentList "/configure `"$work\office.xml`"" -Wait -NoNewWindow -PassThru
             $odtExit = $proc.ExitCode
-            for ($i = 0; $i -lt 12; $i++) {   # pockej az ~2 min, nez se instalace projevi v registru
+            for ($i = 0; $i -lt 18; $i++) {   # pockej az ~3 min, nez se instalace projevi v registru
                 $c = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue
                 if ($c -and $c.PSObject.Properties['ProductReleaseIds'] -and $c.ProductReleaseIds -match 'O365BusinessRetail') { $officeOk = $true; break }
                 Start-Sleep -Seconds 10
             }
-            if ($officeOk) { break }
-            if ($t -lt 2) { Write-Host "    [~] M365 se zatim nenainstaloval (ODT kod $odtExit) - zkousim jeste jednou..." -ForegroundColor DarkYellow }
         }
+
         if ($officeOk) {
             Write-Host "    [i] M365 Apps nainstalovany (overeno v registru). Aktivace = rucne pri prihlaseni." -ForegroundColor DarkGray
             $ok += 'Microsoft365Apps'
         } else {
-            $m = "M365 se nenainstaloval (ODT kod $odtExit) - casto kvuli bezicimu Windows Update; spust skript znovu po dokonceni aktualizaci"
-            Write-Warning "    $m"; $failed += 'Microsoft365Apps'; $script:Issues += $m
+            # misto marneho opakovani ve stejnych podminkach naplanujeme instalaci PO RESTARTU (SYSTEM, pri startu)
+            if (Register-OfficePostRestart -SetupExe $setup -ConfigXml "$work\office.xml") {
+                $why = if ($pending) { 'ceka se na restart' } else { "ODT kod $odtExit" }
+                $m = "M365 se nainstaluje automaticky PO RESTARTU ($why) - uloha 'WP-Office-Install', prubeh: C:\ProgramData\WPBranding\Office\post-restart.log"
+                Write-Host "    [i] $m" -ForegroundColor DarkYellow
+                $ok += 'Microsoft365Apps (po restartu)'
+                $script:Issues += $m
+            } else {
+                $m = "M365 se nenainstaloval (ODT kod $odtExit) a nepodarilo se naplanovat instalaci po restartu - spust skript znovu po restartu"
+                Write-Warning "    $m"; $failed += 'Microsoft365Apps'; $script:Issues += $m
+            }
         }
     } else {
         Write-Warning "    ODT setup.exe nenalezen - M365 preskoceno."
@@ -622,6 +724,19 @@ try {
     Set-Service  -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
     Restart-Service -Name WSearch -Force -ErrorAction SilentlyContinue
     Write-Host "    [i] Indexace: Enhanced (cely PC), sluzba Windows Search bezi." -ForegroundColor DarkGray
+
+    # Sekundarni en-US klavesnice pryc (preset ji drive pridaval). Pojistka: na anglickych Windows nemazat.
+    if ($RemoveENKeyboard) {
+        try {
+            $langs = Get-WinUserLanguageList
+            if (($langs.Count -gt 1) -and ($langs[0].LanguageTag -notlike 'en*')) {
+                $keep = $langs | Where-Object { $_.LanguageTag -ne 'en-US' }
+                if ($keep) { Set-WinUserLanguageList $keep -Force; Write-Host "    [i] Sekundarni en-US klavesnice odebrana." -ForegroundColor DarkGray }
+            } else {
+                Write-Host "    [i] en-US klavesnice: nic k odebrani (nebo je jazykem systemu)." -ForegroundColor DarkGray
+            }
+        } catch { Write-Warning "    en-US klavesnice: $($_.Exception.Message)" }
+    }
 } catch { $m = "Indexace: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
 # --- 8d) Personalizace: hlavni panel, Start, plocha (aktualni + novi uzivatele) ---
@@ -731,6 +846,7 @@ try {
         '• Kontrola povolení Defenderu'
         '• Nastavit heslo k účtu admin (Windows)'
         '• Ověřit indexaci Outlooku po nastavení e-mailového účtu'
+        '• Pokud se Office instaloval až po restartu: ověřit Word/Excel/Outlook (log C:\ProgramData\WPBranding\Office\post-restart.log)'
     )
     # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
     $problems = @()
