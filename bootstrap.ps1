@@ -81,6 +81,7 @@ $adminDesktop = [Environment]::GetFolderPath('DesktopDirectory')
 if (-not $adminDesktop) { $adminDesktop = Join-Path $env:USERPROFILE 'Desktop' }
 if (-not (Test-Path $adminDesktop)) { New-Item -ItemType Directory -Path $adminDesktop -Force | Out-Null }
 $script:Issues = @()   # sem se sbira, co se behem skriptu nepovedlo (pro poznamku adminovi)
+$script:sourceRepaired = $false; $script:wingetReRegistered = $false
 $logFile = Join-Path $adminDesktop ("install_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
 try { Start-Transcript -Path $logFile -Append | Out-Null } catch {}
 Write-Host "[*] Log: $logFile" -ForegroundColor Cyan
@@ -264,6 +265,7 @@ function Resolve-Winget {
 
     # nic nebezi - typicky "App Installer" neni zaregistrovany pro tento ucet (cesta ve WindowsApps = Zugriff verweigert).
     Write-Host "[*] winget nelze spustit - zkousim preregistrovat balicek 'App Installer' pro tento ucet..." -ForegroundColor DarkYellow
+    $script:wingetReRegistered = $true
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
     try {
         $all = Get-AppxPackage -AllUsers -Name Microsoft.DesktopAppInstaller | Sort-Object Version -Descending | Select-Object -First 1
@@ -277,8 +279,9 @@ function Resolve-Winget {
     throw "winget neni k dispozici (nebo ho tento ucet nesmi spustit). Otevri Microsoft Store, aktualizuj 'App Installer', pripadne spust skript pod uctem, ktery uz winget pouzil, a zkus znovu."
 }
 function Invoke-Winget {
-    # volani wingetu, ktere NIKDY neshodi skript (nativni chyba na stderr by pri EAP='Stop' ukoncila cely beh)
-    param([Parameter(ValueFromRemainingArguments = $true)]$WgArgs)
+    # volani wingetu, ktere NIKDY neshodi skript (nativni chyba na stderr by pri EAP='Stop' ukoncila cely beh).
+    # POZOR: argumenty se predavaji jako POLE pres -WgArgs; jinak by PowerShell bral '-e' jako svuj vlastni parametr.
+    param([string[]]$WgArgs)
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
         & $script:winget @WgArgs | Out-Host   # Out-Host: vypis jde na obrazovku, ne do navratove hodnoty funkce
@@ -288,9 +291,43 @@ function Invoke-Winget {
         return -1
     } finally { $ErrorActionPreference = $eap }
 }
+function Repair-WingetSource {
+    # 0x8A15000F = poskozeny/chybejici index zdroju (typicky po preregistraci App Installeru). Provede se jednou za beh.
+    if ($script:sourceRepaired) { return $false }
+    $script:sourceRepaired = $true
+    Write-Host "    [~] Zdroj wingetu je poskozeny - provadim 'source reset' + 'source update'..." -ForegroundColor DarkYellow
+    $null = Invoke-Winget -WgArgs @('source','reset','--force')
+    $null = Invoke-Winget -WgArgs @('source','update')
+    return $true
+}
+function Invoke-WingetInstall {
+    # instalace s opakovanim: 1618 (jina instalace bezi) a 0x8A15000F (rozbity zdroj -> reset a znovu)
+    param([string[]]$WgArgs)
+    $okCodes     = @(0, -1978335189, -1978335135, -1978334963)   # OK / uz aktualni / uz nainstalovano
+    $retryCodes  = @(-1978334974, -1978335226)                   # 1618 = jina instalace bezi
+    $sourceCodes = @(-1978335217, -1978335216)                   # data zdroje chybi / zdroj se nepodarilo otevrit
+    $code = $null
+    for ($try = 1; $try -le 4; $try++) {
+        $code = Invoke-Winget -WgArgs $WgArgs
+        if ($okCodes -contains $code) { break }
+        if ($try -lt 4 -and $sourceCodes -contains $code) {
+            if (Repair-WingetSource) { continue }        # po oprave zkusit hned znovu
+            break                                        # oprava uz probehla a nepomohla -> nema smysl dal
+        }
+        if ($try -lt 4 -and $retryCodes -contains $code) {
+            Write-Host "    [~] Instalacni sluzba je zaneprazdnena (1618) - cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 30
+            continue
+        }
+        break   # jina chyba -> opakovani nema smysl
+    }
+    return $code
+}
 $winget = Resolve-Winget
 $script:winget = $winget
 Write-Host "[*] winget: $winget" -ForegroundColor Cyan
+# po preregistraci balicku byva index zdroju prazdny/rozbity (0x8A15000F) - poresit rovnou, ne az u prvni aplikace
+if ($script:wingetReRegistered) { $null = Repair-WingetSource }
 
 # --- 5) Seznam aplikaci (winget ID) + jazykove/scope vyjimky ---
 #     Apps bez poznamky se ridi jazykem Windows automaticky (7zip, VLC, Chrome, Reader).
@@ -356,7 +393,7 @@ try {
 
 if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIsOurs) {
     try {
-        $null = Invoke-Winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements
+        $null = Invoke-WingetInstall -WgArgs @('install','--id','Microsoft.OfficeDeploymentTool','-e','--silent','--source','winget','--accept-package-agreements','--accept-source-agreements')
         $odtSetup = Join-Path $env:ProgramFiles 'OfficeDeploymentTool\setup.exe'
         if (Test-Path $odtSetup) {
             $rmXml = @"
@@ -439,24 +476,14 @@ foreach ($a in $apps) {
 
     Write-Host "[>] $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
     # winget install sam upgraduje (kdyz je novejsi) nebo neudela nic (kdyz je aktualni) - NEreinstaluje.
-    $okCodes    = @(0, -1978335189, -1978335135, -1978334963)   # OK / uz aktualni / uz nainstalovano
-    $retryCodes = @(-1978334974, -1978335226)                   # 1618 = jina instalace bezi -> ma smysl opakovat
-    $code = $null
-    for ($try = 1; $try -le 4; $try++) {
-        $code = Invoke-Winget @wgArgs
-        if ($okCodes -contains $code) { break }
-        if ($try -lt 4 -and $retryCodes -contains $code) {
-            Write-Host "    [~] Instalacni sluzba je zaneprazdnena (1618) - cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
-            Start-Sleep -Seconds 30
-            continue
-        }
-        break   # jina chyba nez 1618 -> opakovani nema smysl, konci hned
-    }
+    $code = Invoke-WingetInstall -WgArgs $wgArgs
     switch ($code) {
         0           { Write-Host "    [i] nainstalovano / zaktualizovano." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335189 { Write-Host "    [i] uz je aktualni - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335135 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978334963 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978335217 { $m = "$($a.Id): zdroj wingetu je poskozeny i po 'source reset' - spust rucne 'winget source reset --force' a skript znovu"
+                      Write-Warning "    $m"; $failed += "$($a.Id) (zdroj)"; $script:Issues += $m }
         default     { Write-Warning "    $($a.Id) skoncil s kodem $code (i po opakovani)"; $failed += "$($a.Id) (kod $code)" }
     }
 }
@@ -514,7 +541,7 @@ try {
     Write-Host "    [i] Office jazyk: $offLang (jediny)" -ForegroundColor DarkGray
 
     # winget stahne nejnovejsi ODT a rozbali setup.exe do %ProgramFiles%\OfficeDeploymentTool
-    $null = Invoke-Winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements
+    $null = Invoke-WingetInstall -WgArgs @('install','--id','Microsoft.OfficeDeploymentTool','-e','--silent','--source','winget','--accept-package-agreements','--accept-source-agreements')
     $setup = Join-Path $odtDir 'setup.exe'
     if (-not (Test-Path $setup)) {
         $setup = Get-ChildItem $env:ProgramFiles -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
