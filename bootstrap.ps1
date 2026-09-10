@@ -235,16 +235,61 @@ if ($RenameToSerial) {
 }
 
 # --- 4) Overeni / naprava wingetu ---
-function Resolve-Winget {
+function Test-WingetPath {
+    # kandidat je pouzitelny jen tehdy, kdyz opravdu BEZI (cesta ve WindowsApps casto konci "Zugriff verweigert")
+    param([string]$Exe)
+    if (-not $Exe) { return $false }
+    if (-not (Test-Path $Exe)) { return $false }
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $global:LASTEXITCODE = 9999          # aby stary kod nezpusobil falesne pozitivni vysledek
+        $out = & $Exe --version 2>&1
+        return (($LASTEXITCODE -eq 0) -and ("$out" -match '\d+\.\d+'))   # musi vratit i cislo verze
+    } catch { return $false } finally { $ErrorActionPreference = $eap }
+}
+function Get-WingetCandidates {
+    $c = @()
     $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    # zkus najit primo v balickove ceste (cerstvy OOBE stroj nemusi mit PATH)
-    $p = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe" -ErrorAction SilentlyContinue |
-         Sort-Object FullName -Descending | Select-Object -First 1
-    if ($p) { return $p.FullName }
-    throw "winget neni k dispozici. Na ciste Win11 Pro byva predinstalovany; aktualizuj 'App Installer' v Microsoft Store a spust znovu."
+    if ($cmd) { $c += $cmd.Source }
+    $c += "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"          # alias aktualniho uzivatele (funguje i po elevaci)
+    $pkg = Get-AppxPackage -Name Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue |
+           Sort-Object Version -Descending | Select-Object -First 1
+    if ($pkg -and $pkg.InstallLocation) { $c += (Join-Path $pkg.InstallLocation 'winget.exe') }
+    $c += (Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe" -ErrorAction SilentlyContinue |
+           Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName)
+    return ($c | Where-Object { $_ } | Select-Object -Unique)
+}
+function Resolve-Winget {
+    foreach ($cand in (Get-WingetCandidates)) { if (Test-WingetPath $cand) { return $cand } }
+
+    # nic nebezi - typicky "App Installer" neni zaregistrovany pro tento ucet (cesta ve WindowsApps = Zugriff verweigert).
+    Write-Host "[*] winget nelze spustit - zkousim preregistrovat balicek 'App Installer' pro tento ucet..." -ForegroundColor DarkYellow
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $all = Get-AppxPackage -AllUsers -Name Microsoft.DesktopAppInstaller | Sort-Object Version -Descending | Select-Object -First 1
+        if ($all -and $all.InstallLocation) {
+            $man = Join-Path $all.InstallLocation 'AppXManifest.xml'
+            if (Test-Path $man) { Add-AppxPackage -DisableDevelopmentMode -Register $man }
+        }
+    } catch { } finally { $ErrorActionPreference = $eap }
+
+    foreach ($cand in (Get-WingetCandidates)) { if (Test-WingetPath $cand) { return $cand } }
+    throw "winget neni k dispozici (nebo ho tento ucet nesmi spustit). Otevri Microsoft Store, aktualizuj 'App Installer', pripadne spust skript pod uctem, ktery uz winget pouzil, a zkus znovu."
+}
+function Invoke-Winget {
+    # volani wingetu, ktere NIKDY neshodi skript (nativni chyba na stderr by pri EAP='Stop' ukoncila cely beh)
+    param([Parameter(ValueFromRemainingArguments = $true)]$WgArgs)
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & $script:winget @WgArgs | Out-Host   # Out-Host: vypis jde na obrazovku, ne do navratove hodnoty funkce
+        return $LASTEXITCODE
+    } catch {
+        Write-Warning "    winget selhal: $($_.Exception.Message)"
+        return -1
+    } finally { $ErrorActionPreference = $eap }
 }
 $winget = Resolve-Winget
+$script:winget = $winget
 Write-Host "[*] winget: $winget" -ForegroundColor Cyan
 
 # --- 5) Seznam aplikaci (winget ID) + jazykove/scope vyjimky ---
@@ -311,7 +356,7 @@ try {
 
 if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIsOurs) {
     try {
-        & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements 2>$null
+        $null = Invoke-Winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements
         $odtSetup = Join-Path $env:ProgramFiles 'OfficeDeploymentTool\setup.exe'
         if (Test-Path $odtSetup) {
             $rmXml = @"
@@ -398,8 +443,7 @@ foreach ($a in $apps) {
     $retryCodes = @(-1978334974, -1978335226)                   # 1618 = jina instalace bezi -> ma smysl opakovat
     $code = $null
     for ($try = 1; $try -le 4; $try++) {
-        & $winget @wgArgs
-        $code = $LASTEXITCODE
+        $code = Invoke-Winget @wgArgs
         if ($okCodes -contains $code) { break }
         if ($try -lt 4 -and $retryCodes -contains $code) {
             Write-Host "    [~] Instalacni sluzba je zaneprazdnena (1618) - cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
@@ -470,8 +514,7 @@ try {
     Write-Host "    [i] Office jazyk: $offLang (jediny)" -ForegroundColor DarkGray
 
     # winget stahne nejnovejsi ODT a rozbali setup.exe do %ProgramFiles%\OfficeDeploymentTool
-    & $winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget `
-        --accept-package-agreements --accept-source-agreements 2>$null
+    $null = Invoke-Winget install --id Microsoft.OfficeDeploymentTool -e --silent --source winget --accept-package-agreements --accept-source-agreements
     $setup = Join-Path $odtDir 'setup.exe'
     if (-not (Test-Path $setup)) {
         $setup = Get-ChildItem $env:ProgramFiles -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
