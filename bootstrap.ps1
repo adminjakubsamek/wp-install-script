@@ -283,13 +283,28 @@ function Invoke-Winget {
     # POZOR: argumenty se predavaji jako POLE pres -WgArgs; jinak by PowerShell bral '-e' jako svuj vlastni parametr.
     param([string[]]$WgArgs)
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    # winget pise UTF-8; konzole ma ale narodni znakovou stranku (CP852/850), takze by se z bloku
+    # prubehu staly patvary typu "ÔûêÔûê". Na dobu volani prepneme dekodovani na UTF-8.
+    $encOld = [Console]::OutputEncoding
     try {
-        & $script:winget @WgArgs | Out-Host   # Out-Host: vypis jde na obrazovku, ne do navratove hodnoty funkce
+        try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+        # pruh prubehu a procenta do logu nepatri - filtrujeme je, at je vypis citelny (jinak ~1700 radku navic)
+        $blocks = @([char]0x2588, [char]0x2592, [char]0x2591, [char]0x25A0)
+        & $script:winget @WgArgs 2>&1 | ForEach-Object {
+            $line = "$_"
+            $skip = $false
+            foreach ($b in $blocks) { if ($line.IndexOf($b) -ge 0) { $skip = $true; break } }
+            if (-not $skip -and ($line -match '^\s*[-\\/|]\s*$' -or $line -match '^\s*\d+%\s*$')) { $skip = $true }
+            if (-not $skip -and $line.Trim()) { Write-Host $line }
+        }
         return $LASTEXITCODE
     } catch {
         Write-Warning "    winget selhal: $($_.Exception.Message)"
         return -1
-    } finally { $ErrorActionPreference = $eap }
+    } finally {
+        $ErrorActionPreference = $eap
+        try { [Console]::OutputEncoding = $encOld } catch { }
+    }
 }
 function Repair-WingetSource {
     # 0x8A15000F = poskozeny/chybejici index zdroju (typicky po preregistraci App Installeru). Provede se jednou za beh.
