@@ -39,7 +39,18 @@ $DefaultNamePatterns = @(             # co se povazuje za vychozi nazev (regex, 
 $RemoveENKeyboard = $true             # odebrat sekundarni en-US klavesnici (jen kdyz neni jazykem systemu)
 $RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store OneNote
 $RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
-$UserDesktopShortcuts     = @('Google Chrome.lnk','Firefox.lnk','Outlook*.lnk','Word.lnk','Excel.lnk','TeamViewer.lnk')  # smazatelne kopie na plochu (Outlook* = i 'Outlook (classic)')
+# Smazatelne kopie zastupcu na plochu. Alternativni nazvy se oddeluji svislitkem '|'
+# (pouzije se prvni nalezeny) - ruzne verze pojmenovavaji zastupce ruzne. '|' v nazvu souboru byt nemuze.
+$UserDesktopShortcuts     = @(
+    'Google Chrome.lnk'
+    'Firefox.lnk'
+    'Outlook (classic).lnk|Outlook.lnk'                                 # klasicky Outlook ma prednost
+    'Word.lnk'
+    'Excel.lnk'
+    'TeamViewer.lnk'
+    'Adobe Acrobat.lnk|Acrobat Reader.lnk|Adobe Acrobat Reader*.lnk'    # nazev se lisi podle verze
+    'PDFsam Basic.lnk|PDFsam*.lnk'
+)
 $ClearPublicDesktop       = $true     # smazat (ne-smazatelne) zastupce z verejne plochy
 $SetWallpaper             = $true     # nastavit vychozi tapetu (MENITELNOU) aktualnimu i novym uzivatelum
 $SetLockScreen            = $false    # $true nastavi zamykaci obrazovku, ale UZAMKNE ji (Win11 jinak neumi) -> vychozi vypnuto
@@ -124,18 +135,21 @@ function Get-RepoFileQuiet {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$OutFile)
     return (Get-UrlQuiet -Url "$BaseUrl/$Path$Sas" -OutFile $OutFile)
 }
-function Test-PendingReboot {
-    # ceka-li system na restart, C2R instalace Office konci chybou 1603 -> nema smysl to zkouset
+function Get-PendingRebootKind {
+    # 'hard' = C2R instalace Office skoro jiste skonci chybou 1603 -> nezkouset a odlozit za restart
+    # 'soft' = slaby signal (prejmenovani souboru po instalacich) - instalaci zkusit, pri selhani odlozit
+    # 'none' = nic neceka
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
     try {
-        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return $true }
-        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return $true }
-        $pfro = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations
-        if ($pfro -and $pfro.PendingFileRenameOperations) { return $true }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return 'hard' }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return 'hard' }
         $cn  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
         $acn = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
-        if ($cn -and $acn -and ($cn -ne $acn)) { return $true }   # ceka prejmenovani pocitace
-        return $false
+        if ($cn -and $acn -and ($cn -ne $acn)) { return 'hard' }   # ceka prejmenovani pocitace
+        # PendingFileRenameOperations nechava za sebou skoro kazdy instalator - samo o sobe to Office nezablokuje
+        $pfro = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations
+        if ($pfro -and $pfro.PendingFileRenameOperations) { return 'soft' }
+        return 'none'
     } finally { $ErrorActionPreference = $eap }
 }
 function Register-OfficePostRestart {
@@ -318,9 +332,18 @@ function Repair-WingetSource {
 function Invoke-WingetInstall {
     # instalace s opakovanim: 1618 (jina instalace bezi) a 0x8A15000F (rozbity zdroj -> reset a znovu)
     param([string[]]$WgArgs)
-    $okCodes     = @(0, -1978335189, -1978335135, -1978334963)   # OK / uz aktualni / uz nainstalovano
-    $retryCodes  = @(-1978334974, -1978335226)                   # 1618 = jina instalace bezi
-    $sourceCodes = @(-1978335217, -1978335216)                   # data zdroje chybi / zdroj se nepodarilo otevrit
+    # kody podle oficialni tabulky winget (returnCodes.md)
+    $okCodes     = @(0, -1978335189, -1978335135, -1978334963, -1978335153)  # OK / neni co aktualizovat / uz nainstalovano / verze neni novejsi
+    $retryCodes  = @(-1978334974,   # 0x8A150102 jina instalace prave bezi (ekvivalent 1618)
+                     -1978334975,   # 0x8A150101 aplikace bezi
+                     -1978334973,   # 0x8A150103 soubor se prave pouziva
+                     -1978335123)   # 0x8A15006D potrebna sluzba je zaneprazdnena
+    $sourceCodes = @(-1978335217,   # 0x8A15000F chybi data zdroje
+                     -1978335163,   # 0x8A150045 zdroj se nepodarilo otevrit
+                     -1978335157,   # 0x8A15004B nepodarilo se otevrit zadny zdroj
+                     -1978335169,   # 0x8A15003F data zdroje jsou poskozena
+                     -1978335222,   # 0x8A15000A index je poskozeny
+                     -1978335221)   # 0x8A15000B konfigurace zdroju je poskozena
     $code = $null
     for ($try = 1; $try -le 4; $try++) {
         $code = Invoke-Winget -WgArgs $WgArgs
@@ -330,7 +353,7 @@ function Invoke-WingetInstall {
             break                                        # oprava uz probehla a nepomohla -> nema smysl dal
         }
         if ($try -lt 4 -and $retryCodes -contains $code) {
-            Write-Host "    [~] Instalacni sluzba je zaneprazdnena (1618) - cekam 30 s a zkousim znovu ($try/3)..." -ForegroundColor DarkYellow
+            Write-Host "    [~] Instalace je blokovana (bezi jina instalace / aplikace / soubor se pouziva) - cekam 30 s, pokus $try/3..." -ForegroundColor DarkYellow
             Start-Sleep -Seconds 30
             continue
         }
@@ -355,7 +378,7 @@ $apps = @(
     @{ Id = 'Softland.doPDF.11'; Custom = "-install_language=$dopdfLang" }
     @{ Id = 'Oracle.JavaRuntimeEnvironment' }                  # Oracle Java 8 (klasicka java.com); komercne licence!
     @{ Id = 'OpenVPNTechnologies.OpenVPN' }                    # OpenVPN Community klient (profily rucne)
-    @{ Id = 'TeamViewer.TeamViewer' }                          # plny klient; obcas 'hash mismatch' (OVERIT)
+    @{ Id = 'TeamViewer.TeamViewer'; SkipIfRunning = 'TeamViewer' }   # upgrade za bezici vzdalene relace vzdy selze (kod 2)
     @{ Id = 'Microsoft.Teams'; Scope = 'none' }                # novy Teams (work/school); MSIX -> bez --scope
     @{ Id = 'Microsoft.AzureVPNClient'; Scope = 'none' }       # Azure VPN Client (Win11+); samostatny winget instalator
 )
@@ -490,6 +513,16 @@ foreach ($a in $apps) {
     if ($a.ContainsKey('Custom')) { $wgArgs += @('--custom', $a.Custom) }
 
     Write-Host "[>] $($a.Id) (scope=$scope)..." -ForegroundColor Yellow
+
+    # nektere aplikace nejde aktualizovat, dokud bezi (TeamViewer za vzdalene relace vraci kod 2).
+    # Kdyz uz nainstalovane JSOU a prave bezi, upgrade preskocime - nova instalace probehne normalne.
+    if ($a.ContainsKey('SkipIfRunning') -and (Get-Process -Name $a.SkipIfRunning -ErrorAction SilentlyContinue)) {
+        $m = "$($a.Id): aplikace prave bezi (vzdalena relace?) - aktualizace preskocena, udelej ji mimo relaci"
+        Write-Host "    [i] $m" -ForegroundColor DarkYellow
+        $ok += "$($a.Id) (bezi - preskoceno)"; $script:Issues += $m
+        continue
+    }
+
     # winget install sam upgraduje (kdyz je novejsi) nebo neudela nic (kdyz je aktualni) - NEreinstaluje.
     $code = Invoke-WingetInstall -WgArgs $wgArgs
     switch ($code) {
@@ -497,8 +530,18 @@ foreach ($a in $apps) {
         -1978335189 { Write-Host "    [i] uz je aktualni - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335135 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978334963 { Write-Host "    [i] uz nainstalovano - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978335153 { Write-Host "    [i] uz je aktualni - preskoceno." -ForegroundColor DarkGray; $ok += $a.Id }
         -1978335217 { $m = "$($a.Id): zdroj wingetu je poskozeny i po 'source reset' - spust rucne 'winget source reset --force' a skript znovu"
                       Write-Warning "    $m"; $failed += "$($a.Id) (zdroj)"; $script:Issues += $m }
+        -1978335226 { $m = "$($a.Id): instalator skoncil chybou (ShellExecute failed) - aplikace nejspis bezi; zavri ji a nainstaluj rucne"
+                      Write-Warning "    $m"; $failed += "$($a.Id) (instalator)"; $script:Issues += $m }
+        -1978335215 { $m = "$($a.Id): kontrolni soucet instalatoru nesouhlasi s manifestem - zkus pozdeji (balicek se prave aktualizuje)"
+                      Write-Warning "    $m"; $failed += "$($a.Id) (hash)"; $script:Issues += $m }
+        -1978335216 { $m = "$($a.Id): zadny instalator nesedi na tento system (architektura/verze Windows)"
+                      Write-Warning "    $m"; $failed += "$($a.Id) (nepodporovano)"; $script:Issues += $m }
+        -1978334967 { Write-Host "    [i] nainstalovano, dokonci se po restartu." -ForegroundColor DarkGray; $ok += $a.Id }
+        -1978334966 { $m = "$($a.Id): instalace vyzaduje restart - po restartu spust skript znovu"
+                      Write-Warning "    $m"; $failed += "$($a.Id) (restart)"; $script:Issues += $m }
         default     { Write-Warning "    $($a.Id) skoncil s kodem $code (i po opakovani)"; $failed += "$($a.Id) (kod $code)" }
     }
 }
@@ -569,10 +612,12 @@ try {
 
         # C2R instalace SELZE (1603), pokud system ceka na restart - typicky po odebrani OEM Office
         # nebo po prejmenovani pocitace. V tom pripade to nezkousime a rovnou odlozime za restart.
-        $pending = (Test-PendingReboot) -or $script:officeRemoved
+        $rebootKind = Get-PendingRebootKind
+        $pending = ($rebootKind -eq 'hard') -or $script:officeRemoved
         if ($pending) {
-            Write-Host "    [~] System ceka na restart (odebrany OEM Office / prejmenovani) - instalace by skoncila chybou 1603." -ForegroundColor DarkYellow
+            Write-Host "    [~] System ceka na restart (aktualizace / odebrany OEM Office / prejmenovani) - instalace by skoncila chybou 1603." -ForegroundColor DarkYellow
         } else {
+            if ($rebootKind -eq 'soft') { Write-Host "    [i] Po instalacich zbyla prejmenovani souboru - zkousim Office presto nainstalovat." -ForegroundColor DarkGray }
             $proc = Start-Process -FilePath $setup -ArgumentList "/configure `"$work\office.xml`"" -Wait -NoNewWindow -PassThru
             $odtExit = $proc.ExitCode
             for ($i = 0; $i -lt 18; $i++) {   # pockej az ~3 min, nez se instalace projevi v registru
@@ -956,13 +1001,29 @@ try {
 try {
     $defDesk = 'C:\Users\Default\Desktop'
     if (-not (Test-Path $defDesk)) { New-Item -ItemType Directory -Path $defDesk -Force | Out-Null }
-    $startRoot = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
-    foreach ($name in $UserDesktopShortcuts) {
-        $lnk = Get-ChildItem -Path $startRoot -Recurse -Filter $name -ErrorAction SilentlyContinue |
-               Sort-Object @{ Expression = { if ($_.Name -like '*classic*') { 0 } else { 1 } } }, Name | Select-Object -First 1
+    # hledame ve Start menu pro vsechny uzivatele i v tom uzivatelskem (nektere instalatory davaji zastupce jen tam)
+    $startRoots = @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+                    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs") | Where-Object { Test-Path $_ }
+
+    # kam zastupce kopirovat: Default (novi uzivatele) + plocha aktualniho uctu + plochy uz existujicich uzivatelu
+    $deskTargets = @($defDesk, $adminDesktop)
+    $deskTargets += (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Name -notin 'Public','Default','Default User','All Users' } |
+                     ForEach-Object { Join-Path $_.FullName 'Desktop' })
+    $deskTargets = $deskTargets | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    foreach ($entry in $UserDesktopShortcuts) {
+        $patterns = $entry -split '\|'   # alternativni nazvy oddelene svislitkem
+        $name = $patterns -join ' / '    # do hlasky, kdyby se nic nenaslo
+        $lnk = $null
+        foreach ($pat in $patterns) {
+            $lnk = Get-ChildItem -Path $startRoots -Recurse -Filter $pat -ErrorAction SilentlyContinue |
+                   Sort-Object @{ Expression = { if ($_.Name -like '*classic*') { 0 } else { 1 } } }, Name | Select-Object -First 1
+            if ($lnk) { break }        # prvni nalezena alternativa vyhrava
+        }
         if ($lnk) {
-            Copy-Item $lnk.FullName -Destination $defDesk      -Force -ErrorAction SilentlyContinue   # novi uzivatele
-            Copy-Item $lnk.FullName -Destination $adminDesktop -Force -ErrorAction SilentlyContinue   # aby je videl i admin
+            if (-not (Test-Path $defDesk)) { New-Item -ItemType Directory -Path $defDesk -Force | Out-Null }
+            Copy-Item $lnk.FullName -Destination $defDesk -Force -ErrorAction SilentlyContinue        # novi uzivatele
+            foreach ($d in $deskTargets) { Copy-Item $lnk.FullName -Destination $d -Force -ErrorAction SilentlyContinue }
             Write-Host "    [+] plocha: $($lnk.Name)" -ForegroundColor DarkGray
         } else {
             Write-Host "    [-] zastupce nenalezen: $name" -ForegroundColor DarkGray
