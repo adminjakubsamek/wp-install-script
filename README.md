@@ -64,7 +64,7 @@ irm "https://raw.githubusercontent.com/adminjakubsamek/wp-install-script/main/bo
 15. **Zástupci na plochu uživatele** (smazatelné) + úklid veřejné plochy.
 16. **Tapeta** — výchozí, ale **měnitelná** (HKCU + Default hive); zamykací obrazovka volitelně (uzamkne ji).
 16b. **Výchozí aplikace** — ProgID se čtou z registru a nasadí se **novým uživatelům přes DISM**. Chrome=http/https/.htm/.html, Adobe=.pdf, Outlook=mailto, VLC=.avi/.mp3/.mp4, 7-Zip=archivy. Aktuální účet si je nastaví ručně (viz níže).
-17. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu).
+17. **Poznámka na plochu admina** (úkoly + co se nepovedlo + cesta k logu) — zapisuje se **až úplně nakonec**, aby zachytila i problémy z posledních kroků.
 18. **Úklid dočasných souborů**, výpis shrnutí, **restart**.
 
 ---
@@ -137,7 +137,7 @@ se nainstaluje vše v rumunštině, pro český (`cs-CZ`) v češtině atd. Žá
   - `DisableLogonBackgroundImage = 0` (zobrazovat).
 - **Defender SmartScreen / PUA** (Řízení aplikací a prohlížečů):
   - `Set-MpPreference -PUAProtection Enabled` + policy `HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\PUAProtection = 1`
-    (policy klíč funguje i při zapnuté **Tamper Protection**, kterou `Set-MpPreference` jinak blokuje).
+    (při zapnuté **Tamper Protection** Microsoft ignoruje obě cesty — skript proto skutečný stav ověří a případný neúspěch nahlásí).
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer` → `SmartScreenEnabled = Warn`.
   - `HKLM\SOFTWARE\Policies\Microsoft\Windows\System` → `EnableSmartScreen = 1`, `ShellSmartScreenLevel = Warn`.
 - **Indexace celého disku (Enhanced)** (`HKLM\SOFTWARE\Microsoft\Windows Search`):
@@ -327,6 +327,9 @@ wp-install-script/
 - **Přejmenování jen továrních názvů** — počítač se přejmenuje na sériové číslo **pouze** má-li ještě tovární název (`DESKTOP-…`, `LAPTOP-…`, `WIN-…`, `MININT-…`). Pojmenoval-li ho admin ručně, název zůstane. Vypíná se `$RenameOnlyDefaultNames = $false`.
 - **Sekundární en-US klávesnice** — z presetu byl odebrán `AddENKeyboard`; skript navíc en-US aktivně **odebere** (`$RemoveENKeyboard`), ale nikdy na Windows, jejichž jazykem je angličtina.
 - **winget „Přístup odepřen"** — cesta `C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_…\winget.exe` je chráněná ACL a povýšenému účtu ji často **nedovolí spustit**. Skript proto kandidáty (PATH → alias `%LOCALAPPDATA%\Microsoft\WindowsApps` → cesta balíčku) **otestuje spuštěním** `--version` a vezme první, který skutečně běží. Když neběží žádný, pokusí se balíček *App Installer* pro daný účet **přeregistrovat** (`Add-AppxPackage -Register`) a zkusí to znovu.
+- **Blokování PUA a Tamper Protection** — když je zapnutá **Tamper Protection** (na Windows 11 výchozí stav), Microsoft ignoruje změny nastavení Defenderu provedené **registrem i skupinovou politikou**; změna „projde", ale neplatí. Skript proto obojí zkusí, **ověří skutečný stav** přes `Get-MpPreference` a při neúspěchu to zapíše do poznámky místo falešného hlášení o úspěchu. Zapnout se to pak musí ručně (Zabezpečení Windows → Řízení aplikací a prohlížeče) nebo politikou z Intune. *(Dřívější verze README tvrdila, že policy klíč Tamper Protection obchází — to bylo nesprávné.)*
+- **„Řízení aplikací a prohlížeče" má víc částí** — skript nastavuje SmartScreen pro aplikace a soubory, SmartScreen v Edge, ochranu před phishingem a SmartScreen pro aplikace ze Storu (uživatelský klíč `AppHost\EnableWebContentEvaluation`, nastavuje se i v profilu Default). **Inteligentní řízení aplikací (Smart App Control)** skriptem zapnout nelze — Windows ho povolí jen při čisté instalaci.
+- **Předinstalované Office aplikace** — odebírá se dlaždice „Microsoft 365 (Office)", OneNote a hlavně **OEM stuby `Microsoft.Office.Desktop*`** (Word/Excel/PowerPoint/…, které stahují zkušební Office). Odebírá se pro všechny uživatele i z image (aby je noví uživatelé nedostali) a výsledek se vypíše; co odebrat nejde, skončí v poznámce.
 - **Zástupci na ploše mizeli u Adobe a PDFsamu** — oba instalátory dávají zástupce na **veřejnou plochu**, kterou skript čistí (pro běžného uživatele je nesmazatelná). Řešení: jsou v `$UserDesktopShortcuts`, takže se zkopírují ze Start menu jako **vlastní smazatelná kopie**. Kopírují se do profilu Default (noví uživatelé), na plochu aktuálního účtu **i na plochy už existujících uživatelů**, a hledají se ve Start menu pro všechny uživatele i v uživatelském.
 - **Návratové kódy podle oficiální tabulky** (`winget-cli/doc/.../returnCodes.md`). Pozor na záměnu: `-1978334974` (`0x8A150102`) je „právě běží jiná instalace" (ekvivalent 1618), kdežto `-1978335226` (`0x8A150006`) je „ShellExecute failed", tedy selhal samotný instalátor — opakovat nemá smysl. Opakuje se jen u kódů, kde to dává smysl (běžící instalace, běžící aplikace, zamčený soubor, zaneprázdněná služba).
 - **Aplikace, které nejde aktualizovat za běhu** — položka v seznamu může mít `SkipIfRunning = '<proces>'`. Když proces běží, upgrade se přeskočí místo marného opakování. Nastaveno pro **TeamViewer**: aktualizace během aktivní vzdálené relace vždy skončí chybou (instalátor vrátí 2). Na čistém stroji, kde TeamViewer neběží, se nainstaluje normálně.

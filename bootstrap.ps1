@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-    Vsenory - Win11 provisioning bootstrap (v1, k otestovani na jednom stroji)
+    WELL PACK / Vsenory - Win11 provisioning bootstrap
     --------------------------------------------------------------------------
     Spustit v ELEVOVANEM PowerShellu na ciste instalaci Win11 po prvnim spusteni.
     Nezavisi na NASce ani na jednotce Q: - vse se tahne z verejneho GitHub repa
@@ -37,7 +37,7 @@ $DefaultNamePatterns = @(             # co se povazuje za vychozi nazev (regex, 
     '^(USER|USER-PC|PC|COMPUTER|MYPC|HOME|OEM)$'
 )
 $RemoveENKeyboard = $true             # odebrat sekundarni en-US klavesnici (jen kdyz neni jazykem systemu)
-$RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store OneNote
+$RemovePreinstalledOffice = $true     # PRVNI krok: odinstalovat OEM Office C2R + jazykove mutace + Store dlazdice (OfficeHub/OneNote/Office.Desktop*)
 $RemoveThirdPartyAV       = $true     # PRVNI krok: odinstalovat cizi antiviry (Defender a ESET nechat)
 # Smazatelne kopie zastupcu na plochu. Alternativni nazvy se oddeluji svislitkem '|'
 # (pouzije se prvni nalezeny) - ruzne verze pojmenovavaji zastupce ruzne. '|' v nazvu souboru byt nemuze.
@@ -143,9 +143,9 @@ function Get-PendingRebootKind {
     try {
         if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { return 'hard' }
         if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { return 'hard' }
-        $cn  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
-        $acn = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
-        if ($cn -and $acn -and ($cn -ne $acn)) { return 'hard' }   # ceka prejmenovani pocitace
+        $cnObj  = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName'       -Name ComputerName -ErrorAction SilentlyContinue
+        $acnObj = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' -Name ComputerName -ErrorAction SilentlyContinue
+        if ($cnObj -and $acnObj -and ($cnObj.ComputerName -ne $acnObj.ComputerName)) { return 'hard' }   # ceka prejmenovani pocitace
         # PendingFileRenameOperations nechava za sebou skoro kazdy instalator - samo o sobe to Office nezablokuje
         $pfro = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations
         if ($pfro -and $pfro.PendingFileRenameOperations) { return 'soft' }
@@ -221,6 +221,7 @@ Write-Host "[*] Jazyk Windows: $tag (aplikace v tomto jazyce; Office=$offLang)" 
 if ($RenameToSerial) {
     try {
         # prejmenovavat jen tovarni nazvy - rucne pojmenovane PC nechat byt
+        $script:skipRename = $false      # MUSI se inicializovat: pri StrictMode by cteni nenastavene promenne shodilo blok
         $isDefaultName = $false
         foreach ($rx in $DefaultNamePatterns) { if ($env:COMPUTERNAME -match $rx) { $isDefaultName = $true; break } }
         if ($RenameOnlyDefaultNames -and -not $isDefaultName) {
@@ -455,16 +456,40 @@ if ($RemovePreinstalledOffice -and $script:officeHave -and -not $script:officeIs
     Write-Host "    [i] Zadny cizi Office k odebrani." -ForegroundColor DarkGray
 }
 
-# Store/UWP Office stuby + OneNote (vsem uzivatelum + provisioned) - idempotentni, vzdy
+# Store/UWP Office stuby + OneNote (vsem uzivatelum + provisioned) - idempotentni, vzdy.
+# 'Microsoft.Office.Desktop*' jsou OEM stuby Wordu/Excelu/..., ktere na dlazdici stahuji zkusebni Office.
 if ($RemovePreinstalledOffice) {
-    foreach ($pat in 'Microsoft.MicrosoftOfficeHub','Microsoft.Office.OneNote','Microsoft.OneNote') {
-        try { Get-AppxPackage -AllUsers -Name $pat -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue } catch {}
+    $appxPatterns = @(
+        'Microsoft.MicrosoftOfficeHub'      # dlazdice "Microsoft 365 (Office)"
+        'Microsoft.Office.OneNote'          # OneNote pro Windows 10
+        'Microsoft.OneNote'
+        'Microsoft.Office.Desktop*'         # OEM stuby Word/Excel/PowerPoint/Outlook/Access/Publisher
+        'Microsoft.MicrosoftOfficeHub*'
+    )
+    $removed = @(); $stuck = @()
+    foreach ($pat in $appxPatterns) {
+        # a) odinstalovat vsem uzivatelum (kazdy balicek zvlast, at jeden neuspech nezastavi ostatni)
+        foreach ($pkg in (Get-AppxPackage -AllUsers -Name $pat -ErrorAction SilentlyContinue)) {
+            try {
+                Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
+                $removed += $pkg.Name
+            } catch { $stuck += $pkg.Name }
+        }
+        # b) odebrat i z image, aby ho NOVI uzivatele uz nedostali
         try {
             Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-                Where-Object { $_.DisplayName -eq $pat } |
+                Where-Object { $_.DisplayName -like $pat } |
                 ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null }
         } catch {}
     }
+    $removed = $removed | Select-Object -Unique
+    $stuck   = $stuck   | Where-Object { $removed -notcontains $_ } | Select-Object -Unique
+    if ($removed) { Write-Host "    [i] Odebrane Office aplikace: $($removed -join ', ')" -ForegroundColor DarkGray }
+    if ($stuck) {
+        $m = "Nektere Office aplikace nejde odebrat (systemove): $($stuck -join ', ') - odstran je rucne pres Start > pravy klik > Odinstalovat"
+        Write-Host "    [i] $m" -ForegroundColor DarkYellow; $script:Issues += $m
+    }
+    if (-not $removed -and -not $stuck) { Write-Host "    [i] Zadne predinstalovane Office aplikace nenalezeny." -ForegroundColor DarkGray }
 }
 
 # 2) Cizi antiviry (best-effort; Windows Defender a ESET ZAMERNE nechavame)
@@ -823,15 +848,42 @@ try {
     try { & label.exe C: OS } catch { $m = "Popisek disku C:: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 }
 
-# Defender - zapnout "Rizeni aplikaci a prohlizecu" (reputace + blokovani PUA) pro vsechny
+# Defender - "Rizeni aplikaci a prohlizece": SmartScreen (neni chraneny) + PUA (chraneny Tamper Protection)
 try {
-    Set-MpPreference -PUAProtection Enabled -ErrorAction SilentlyContinue
-    # PUA i pres policy klic - Set-MpPreference blokuje Tamper Protection, policy klic ne
-    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v PUAProtection /t REG_DWORD /d 1 /f *>$null
+    # 1) SmartScreen pro aplikace a soubory + Explorer - bezne klice, Tamper Protection je nehlida
     & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Warn /f *>$null
-    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableSmartScreen /t REG_DWORD /d 1 /f *>$null
-    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v ShellSmartScreenLevel /t REG_SZ /d Warn /f *>$null
-    Write-Host "    [i] Defender: SmartScreen + blokovani PUA zapnuto." -ForegroundColor DarkGray
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableSmartScreen     /t REG_DWORD /d 1    /f *>$null
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v ShellSmartScreenLevel /t REG_SZ    /d Warn /f *>$null
+    # 2) SmartScreen v Edge (vcetne blokovani PUA v prohlizeci)
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v SmartScreenEnabled    /t REG_DWORD /d 1 /f *>$null
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v SmartScreenPuaEnabled /t REG_DWORD /d 1 /f *>$null
+    # 3) Ochrana pred phishingem (Enhanced Phishing Protection)
+    $wtds = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WTDS\Components"
+    foreach ($v in 'ServiceEnabled','NotifyMalicious','NotifyPasswordReuse','NotifyUnsafeApp','CaptureThreatWindow') {
+        & reg add $wtds /v $v /t REG_DWORD /d 1 /f *>$null
+    }
+    # 4) PUA: zkusit obema cestami. POZOR: kdyz je zapnuta Tamper Protection, Microsoft obe cesty
+    #    (registr i Group Policy) ignoruje - zmena "projde", ale neplati. Proto nasleduje overeni.
+    Set-MpPreference -PUAProtection Enabled -ErrorAction SilentlyContinue
+    & reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v PUAProtection /t REG_DWORD /d 1 /f *>$null
+
+    # 5) OVERENI skutecneho stavu (nehlasit uspech, ktery neplati)
+    $mpPref = Get-MpPreference      -ErrorAction SilentlyContinue
+    $mpStat = Get-MpComputerStatus  -ErrorAction SilentlyContinue
+    $ssObj  = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' -Name SmartScreenEnabled -ErrorAction SilentlyContinue
+    $pua    = if ($mpPref -and $mpPref.PSObject.Properties['PUAProtection'])    { $mpPref.PUAProtection }    else { $null }
+    $tamper = if ($mpStat -and $mpStat.PSObject.Properties['IsTamperProtected']) { $mpStat.IsTamperProtected } else { $false }
+    $ss     = if ($ssObj) { $ssObj.SmartScreenEnabled } else { '(nenastaveno)' }
+    Write-Host "    [i] SmartScreen: $ss (aplikace/soubory, Edge, phishing)." -ForegroundColor DarkGray
+    if ($pua -eq 1 -or $pua -eq 2) {
+        Write-Host "    [i] Defender: blokovani PUA zapnuto (PUAProtection=$pua)." -ForegroundColor DarkGray
+    } elseif ($tamper) {
+        $m = "Defender PUA nelze zapnout skriptem - je zapnuta Tamper Protection (Microsoft ignoruje registr i GPO). Zapni rucne: Zabezpeceni Windows > Rizeni aplikaci a prohlizece > Ochrana zalozena na reputaci, nebo politikou z Intune."
+        Write-Warning "    $m"; $script:Issues += $m
+    } else {
+        $m = "Defender PUA se nepodarilo zapnout (PUAProtection=$pua) - zkontroluj rucne v Zabezpeceni Windows."
+        Write-Warning "    $m"; $script:Issues += $m
+    }
 } catch { $m = "Defender SmartScreen/PUA: $($_.Exception.Message)"; Write-Warning "    $m"; $script:Issues += $m }
 
 # Ucet "admin": admin prava + heslo BEZ expirace (samotne HESLO se nastavuje rucne - viz poznamka)
@@ -892,6 +944,8 @@ try {
         & reg add $adv /v ShowTaskViewButton   /t REG_DWORD /d 0 /f *>$null   # Zobrazeni ukolu = Vypnuto
         & reg add $adv /v TaskbarDa            /t REG_DWORD /d 0 /f *>$null   # Widgety = Vypnuto
         & reg add $adv /v IsEnabled            /t REG_DWORD /d 0 /f *>$null   # Pokracovat (Resume) = Vypnuto
+        # SmartScreen pro aplikace z Microsoft Storu (soucast "Rizeni aplikaci a prohlizece") je uzivatelske nastaveni
+        & reg add "$r\Software\Microsoft\Windows\CurrentVersion\AppHost" /v EnableWebContentEvaluation /t REG_DWORD /d 1 /f *>$null
         $nsp = "$r\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
         & reg add $nsp /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 0 /f *>$null   # Tento pocitac
         & reg add $nsp /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 0 /f *>$null   # Slozka uzivatele
@@ -959,41 +1013,6 @@ $pins      </taskbar:TaskbarPinList>
     & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v LayoutXMLPath /t REG_SZ /d $tbXml /f *>$null
     Write-Host "    [i] Taskbar pripnuti (Chrome, Firefox, Pruzkumnik, Outlook, Teams, Vystrizky) - policy LayoutXMLPath, projevi se po restartu." -ForegroundColor DarkGray
 } catch { Write-Warning "    Taskbar pripnuti: $($_.Exception.Message)" }
-
-# --- 8e) Poznamka na plochu admina (co dodelat po instalaci) ---
-try {
-    $todo = @(
-        'ADMIN – dodělat po instalaci'
-        '============================'
-        ''
-        '• ESET – doinstalovat'
-        '• TeamViewer – nastavit statické heslo'
-        '• Tiskárny'
-        '• Migrace dat'
-        '• Google Chrome – záložky a hesla (kontrola)'
-        '• OneDrive – přihlášení'
-        '• Heslo počítače + ESET šifrování'
-        '• Kontrola povolení Defenderu'
-        '• Nastavit heslo k účtu admin (Windows)'
-        '• Ověřit indexaci Outlooku po nastavení e-mailového účtu'
-        '• Pokud se Office instaloval až po restartu: ověřit Word/Excel/Outlook (log C:\ProgramData\WPBranding\Office\post-restart.log)'
-    )
-    # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
-    $problems = @()
-    if ($failed)        { $problems += $failed }
-    if ($script:Issues) { $problems += $script:Issues }
-    $todo += ''
-    $todo += 'Co se NEPOVEDLO automaticky (zkontrolovat):'
-    $todo += '-------------------------------------------'
-    if ($problems) { foreach ($x in $problems) { $todo += "• $x" } }
-    else           { $todo += '• (nic – vše proběhlo OK)' }
-    $todo += ''
-    $todo += "Detailní log: $logFile"
-    $noteText = $todo -join "`r`n"
-    $notePath = Join-Path $adminDesktop 'ADMIN - po instalaci.txt'
-    Set-Content -Path $notePath -Value $noteText -Encoding UTF8
-    Write-Host "    [i] Poznamka na plochu: $notePath" -ForegroundColor DarkGray
-} catch { Write-Warning "    Poznamka na plochu: $($_.Exception.Message)" }
 
 # --- 8f) Zastupci na plochu uzivatele (smazatelne) + uklid verejne plochy ---
 # Verejna plocha (C:\Users\Public\Desktop) je pro ne-adminy NESMAZATELNA. Proto davame
@@ -1143,6 +1162,41 @@ if ($SetDefaultApps) {
     #    -> aktualni ucet si vychozi aplikace nastavi rucne (Nastaveni > Aplikace > Vychozi aplikace).
     Write-Host "    [i] Pozn.: vychozi aplikace plati pro NOVE uzivatele; aktualnimu uctu je nutne nastavit rucne (Win11 je chrani hashem)." -ForegroundColor DarkGray
 }
+
+# --- 8i) Poznamka na plochu admina (AZ NAKONEC, aby obsahovala i problemy z poslednich kroku) ---
+try {
+    $todo = @(
+        'ADMIN – dodělat po instalaci'
+        '============================'
+        ''
+        '• ESET – doinstalovat'
+        '• TeamViewer – nastavit statické heslo'
+        '• Tiskárny'
+        '• Migrace dat'
+        '• Google Chrome – záložky a hesla (kontrola)'
+        '• OneDrive – přihlášení'
+        '• Heslo počítače + ESET šifrování'
+        '• Kontrola povolení Defenderu (blokování PUA jde zapnout jen ručně, pokud běží Tamper Protection)'
+        '• Nastavit heslo k účtu admin (Windows)'
+        '• Ověřit indexaci Outlooku po nastavení e-mailového účtu'
+        '• Pokud se Office instaloval až po restartu: ověřit Word/Excel/Outlook (log C:\ProgramData\WPBranding\Office\post-restart.log)'
+    )
+    # co se behem skriptu nepovedlo (neuspesne instalace + problemy z uklidu apod.)
+    $problems = @()
+    if ($failed)        { $problems += $failed }
+    if ($script:Issues) { $problems += $script:Issues }
+    $todo += ''
+    $todo += 'Co se NEPOVEDLO automaticky (zkontrolovat):'
+    $todo += '-------------------------------------------'
+    if ($problems) { foreach ($x in $problems) { $todo += "• $x" } }
+    else           { $todo += '• (nic – vše proběhlo OK)' }
+    $todo += ''
+    $todo += "Detailní log: $logFile"
+    $noteText = $todo -join "`r`n"
+    $notePath = Join-Path $adminDesktop 'ADMIN - po instalaci.txt'
+    Set-Content -Path $notePath -Value $noteText -Encoding UTF8
+    Write-Host "    [i] Poznamka na plochu: $notePath" -ForegroundColor DarkGray
+} catch { Write-Warning "    Poznamka na plochu: $($_.Exception.Message)" }
 
 # --- 9) Uklid temp + shrnuti + restart ---
 Write-Host "[*] Uklizim pracovni slozku..." -ForegroundColor Cyan
